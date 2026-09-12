@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Frame to Trajectory</title>
+
+    <style>
+      :root {
+        color-scheme: light;
+        --bg:       #ffffff;
+        --panel:    #fafafa;
+        --ink:      rgb(26, 26, 26);
+        --muted:    grey;
+        --line:     rgb(26, 26, 26);
+        --line-soft:#cccccc;
+        --blue:     #0000cd;
+        --green:    green;
+        --red:      rgb(255, 0, 0);
+        --red-ink:  #cc0000;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Arial, Helvetica, sans-serif;
+        font-size: 16px;
+        line-height: 1.6;
+        margin: 0;
+        padding: 20px 20px 80px;
+      }
+
+      .wrap { max-width: 1240px; margin: 0 auto; }
+
+      /* ---------------------------------------------------------- masthead */
+      .masthead {
+        padding: 24px 0 22px;
+        border-bottom: 3px solid var(--line);
+      }
+      .eyebrow {
+        font-size: 13px;
+        color: var(--muted);
+        margin: 0 0 10px;
+        letter-spacing: .04em;
+      }
+      h1 {
+        font-size: clamp(30px, 5vw, 46px);
+        line-height: 1.12;
+        margin: 0 0 14px;
+        color: var(--ink);
+        text-wrap: balance;
+      }
+      .warning {
+        color: var(--red);
+        font-weight: bold;
+        font-size: clamp(17px, 2.2vw, 22px);
+        line-height: 1.4;
+        margin: 0 0 18px;
+        max-width: 60ch;
+      }
+      .facts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 26px;
+        font-size: 14px;
+        color: var(--muted);
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .facts b { color: var(--ink); }
+
+      /* ---------------------------------------------------------- sections */
+      section { padding-top: 44px; }
+      h2 {
+        color: var(--blue);
+        font-weight: bold;
+        font-size: clamp(20px, 2.8vw, 27px);
+        line-height: 1.2;
+        margin: 0 0 8px;
+        text-wrap: balance;
+      }
+      .lede {
+        color: var(--ink);
+        max-width: 70ch;
+        margin: 0 0 24px;
+      }
+      p { max-width: 70ch; }
+      code {
+        font-family: Consolas, "Courier New", monospace;
+        font-size: .9em;
+        background: #f0f0f0;
+        border: 1px solid var(--line-soft);
+        padding: .05em .3em;
+        border-radius: 2px;
+      }
+
+      /* ---------------------------------------------------------- figures */
+      figure { margin: 0; }
+      .canvas {
+        background: var(--bg);
+        border: 1px solid var(--line);
+        padding: 10px;
+        overflow-x: auto;
+      }
+      .canvas svg { display: block; min-width: 760px; width: 100%; height: auto; }
+      figcaption {
+        font-size: 14.5px;
+        color: var(--ink);
+        margin-top: 12px;
+        max-width: 76ch;
+      }
+      .legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px 24px;
+        margin: 12px 0 0;
+        padding: 0;
+        list-style: none;
+        font-size: 13.5px;
+        color: var(--muted);
+      }
+      .legend li { display: flex; align-items: center; gap: 8px; }
+      .swatch { width: 28px; height: 0; border-top-width: 2.5px; border-top-style: solid; flex: none; }
+      .sw-flow   { border-top-color: var(--ink); }
+      .sw-ident  { border-top-color: var(--blue); }
+      .sw-reject { border-top-color: var(--red); border-top-style: dashed; }
+
+      /* ---------------------------------------------------------- vote */
+      .vote-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(320px, 470px);
+        gap: 36px;
+        align-items: start;
+      }
+      @media (max-width: 900px) { .vote-grid { grid-template-columns: 1fr; gap: 28px; } }
+
+      table.data {
+        border-collapse: collapse;
+        background: white;
+        width: 100%;
+        font-size: 14px;
+      }
+      table.data th, table.data td {
+        border: 1px solid var(--line);
+        padding: 7px 9px;
+        text-align: left;
+        vertical-align: top;
+      }
+      table.data th {
+        background: #f0f0f0;
+        font-size: 13px;
+      }
+      .mono {
+        font-family: Consolas, "Courier New", monospace;
+        font-variant-numeric: tabular-nums;
+      }
+      .plate-str { font-family: Consolas, "Courier New", monospace; letter-spacing: .08em; }
+      tr.dropped td { color: var(--muted); }
+      tr.dropped .plate-str { text-decoration: line-through; text-decoration-color: var(--red); }
+      .rej-word { color: var(--red); font-weight: bold; }
+      .ok-word  { color: var(--green); }
+
+      .readout {
+        border: 1px solid var(--line);
+        background: white;
+        padding: 18px;
+      }
+      .readout-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 14px;
+        flex-wrap: wrap;
+      }
+      .readout-head .label { font-size: 13px; color: var(--muted); }
+      .locked-pill {
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 12px;
+        font-weight: bold;
+        color: var(--green);
+        border: 2px solid var(--green);
+        padding: 2px 10px;
+        white-space: nowrap;
+      }
+      .chars { display: grid; grid-template-columns: repeat(10, 1fr); gap: 5px; }
+      .char { display: grid; gap: 5px; justify-items: center; }
+      .char .glyph {
+        width: 100%;
+        aspect-ratio: 5 / 7;
+        display: grid;
+        place-items: center;
+        background: white;
+        border: 2px solid var(--ink);
+        border-radius: 2px;
+        font-family: Consolas, "Courier New", monospace;
+        font-weight: bold;
+        font-size: clamp(13px, 2.3vw, 20px);
+        color: var(--ink);
+      }
+      .char.corrected .glyph { border-color: var(--blue); color: var(--blue); }
+      .char .bar {
+        width: 100%;
+        height: 34px;
+        background: #f0f0f0;
+        border: 1px solid var(--line-soft);
+        display: flex;
+        align-items: flex-end;
+        overflow: hidden;
+      }
+      .char .bar i { display: block; width: 100%; background: var(--blue); }
+      .char .val { font-family: Consolas, "Courier New", monospace; font-size: 10px; color: var(--muted); }
+      .readout-foot { margin: 16px 0 0; font-size: 14px; max-width: none; }
+
+      /* ---------------------------------------------------------- owners */
+      .hard {
+        color: var(--red);
+        font-weight: bold;
+        font-size: 11.5px;
+        letter-spacing: .06em;
+        white-space: nowrap;
+      }
+      td .who { font-family: Consolas, "Courier New", monospace; white-space: nowrap; }
+
+      /* ---------------------------------------------------------- limits */
+      .limits { margin: 0; padding: 0; list-style: none; max-width: 82ch; }
+      .limits li {
+        display: grid;
+        grid-template-columns: 110px minmax(0, 1fr);
+        gap: 18px;
+        padding: 12px 0;
+        border-bottom: 1px solid var(--line-soft);
+        align-items: baseline;
+      }
+      .limits li:first-child { border-top: 1px solid var(--line-soft); }
+      .limits .who { color: var(--blue); font-weight: bold; font-size: 14px; font-family: inherit; }
+      .limits p { margin: 0; font-size: 15px; }
+      @media (max-width: 560px) { .limits li { grid-template-columns: 1fr; gap: 2px; } }
+
+      .footer {
+        margin-top: 56px;
+        padding-top: 18px;
+        border-top: 1px solid var(--line-soft);
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      /* ---------------------------------------------------------- svg type */
+      .svg-mod   { font-family: Consolas, "Courier New", monospace; font-size: 14px; font-weight: bold; fill: var(--ink); }
+      .svg-sub   { font-family: Arial, Helvetica, sans-serif; font-size: 12px; fill: var(--muted); }
+      .svg-own   { font-family: Consolas, "Courier New", monospace; font-size: 11px; fill: var(--muted); }
+      .svg-edge  { font-family: Arial, Helvetica, sans-serif; font-size: 11.5px; fill: var(--muted); }
+      .svg-ident { font-family: Arial, Helvetica, sans-serif; font-size: 11.5px; fill: var(--blue); font-weight: bold; }
+      .svg-rej   { font-family: Arial, Helvetica, sans-serif; font-size: 11.5px; fill: var(--red-ink); }
+      .svg-band  { font-family: Arial, Helvetica, sans-serif; font-size: 12px; font-weight: bold; fill: var(--muted); letter-spacing: .12em; }
+      .svg-box   { fill: #ffffff; stroke: var(--ink); stroke-width: 1.5; }
+      .svg-box-k { fill: none; stroke: var(--blue); stroke-width: 2.5; }
+      .flow      { stroke: var(--ink); stroke-width: 1.4; fill: none; }
+      .ident     { stroke: var(--blue); stroke-width: 2.2; fill: none; }
+      .rej       { stroke: var(--red); stroke-width: 1.6; fill: none; stroke-dasharray: 5 4; }
+    </style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="eyebrow">SIH26127 &nbsp;&#183;&nbsp; ANPR prototype &nbsp;&#183;&nbsp; how the pieces fit together</p>
+    <h1>Frame to Trajectory</h1>
+    <p class="warning">A wrong link is worse than a missing link. Every filter below exists to reject.</p>
+    <ul class="facts">
+      <li><b>8</b> modules</li>
+      <li><b>6</b> owners</li>
+      <li><b>3</b> cameras, one shared clock</li>
+      <li><b>2</b> loops: per frame, per finished track</li>
+      <li>pretrained models, <b>no fine-tuning</b></li>
+    </ul>
+  </header>
+
+  <section>
+    <h2>The pipeline</h2>
+    <p class="lede">
+      A frame enters at the far left and leaves as a row in the sightings table. Nothing is
+      identified in one pass: the top band runs many times per vehicle, collecting noisy plate
+      reads, and only hands the bottom band a result once voting locks it or the OCR budget
+      runs out.
+    </p>
+
+    <figure>
+      <div class="canvas">
+        <svg viewBox="0 0 1200 700" role="img"
+             aria-label="Two-band pipeline. Top band, repeated per frame: camera.py yields frames with a unix timestamp to detector.py, which yields vehicle crops to plate_reader.py, which yields characters and confidences to plate_logic.vote; a loop returns to the detector for the next frame until the plate locks or the OCR budget is spent, and failed crops are dropped. Bottom band, once per finished track: build_sighting combines the finished track and the voted plate into a row, database.py stores it, linker.py rejects implausible pairs before scoring the rest, and visualizer.py draws the annotated frames and the map.">
+
+          <defs>
+            <marker id="a-flow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="rgb(26,26,26)"></path>
+            </marker>
+            <marker id="a-ident" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="#0000cd"></path>
+            </marker>
+            <marker id="a-rej" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="rgb(255,0,0)"></path>
+            </marker>
+          </defs>
+
+          <!-- ============ band 1 ============ -->
+          <text class="svg-band" x="32" y="96">PER FRAME &#183; INSIDE ONE CAMERA</text>
+
+          <path class="flow" d="M 1057 112 L 1057 46 L 447 46" marker-end="url(#a-flow)"></path>
+          <text class="svg-edge" x="752" y="38" text-anchor="middle">next frame &#183; until locked, or MAX_OCR_PER_TRACK spent</text>
+          <path class="flow" d="M 447 46 L 447 106" marker-end="url(#a-flow)"></path>
+
+          <rect class="svg-box" x="32" y="112" width="220" height="104"></rect>
+          <text class="svg-mod" x="48" y="140">camera.py</text>
+          <text class="svg-own" x="236" y="140" text-anchor="end">P1</text>
+          <text class="svg-sub" x="48" y="166">VideoCapture, frame skip</text>
+          <text class="svg-sub" x="48" y="186">3 files, one unix clock</text>
+          <text class="svg-sub" x="48" y="206">C1 &#183; C2 &#183; C3</text>
+
+          <rect class="svg-box" x="337" y="112" width="220" height="104"></rect>
+          <text class="svg-mod" x="353" y="140">detector.py</text>
+          <text class="svg-own" x="541" y="140" text-anchor="end">P2</text>
+          <text class="svg-sub" x="353" y="166">YOLO + BoT-SORT</text>
+          <text class="svg-sub" x="353" y="186">colour, direction, sharpness</text>
+          <text class="svg-sub" x="353" y="206">keeps the best crop per track</text>
+
+          <rect class="svg-box" x="642" y="112" width="220" height="104"></rect>
+          <text class="svg-mod" x="658" y="140">plate_reader.py</text>
+          <text class="svg-own" x="846" y="140" text-anchor="end">P3</text>
+          <text class="svg-sub" x="658" y="166">passes_gate, then fast-alpr</text>
+          <text class="svg-sub" x="658" y="186">per-character probabilities</text>
+          <text class="svg-sub" x="658" y="206">unreadable slot = '?'</text>
+
+          <rect class="svg-box" x="947" y="112" width="220" height="104"></rect>
+          <rect class="svg-box-k" x="947" y="112" width="220" height="104"></rect>
+          <text class="svg-mod" x="963" y="140">plate_logic.vote</text>
+          <text class="svg-own" x="1151" y="140" text-anchor="end">P6</text>
+          <text class="svg-sub" x="963" y="166">length vote, then format rules</text>
+          <text class="svg-sub" x="963" y="186">conf &#215; quality per position</text>
+          <text class="svg-sub" x="963" y="206">3 agreeing reads &#8594; locked</text>
+
+          <path class="flow" d="M 258 164 L 331 164" marker-end="url(#a-flow)"></path>
+          <text class="svg-edge" x="294" y="152" text-anchor="middle">frame, t</text>
+
+          <path class="flow" d="M 563 164 L 636 164" marker-end="url(#a-flow)"></path>
+          <text class="svg-edge" x="599" y="152" text-anchor="middle">crop, quality</text>
+
+          <path class="ident" d="M 868 164 L 941 164" marker-end="url(#a-ident)"></path>
+          <text class="svg-ident" x="904" y="152" text-anchor="middle">chars, confs</text>
+
+          <path class="rej" d="M 752 222 L 752 258" marker-end="url(#a-rej)"></path>
+          <text class="svg-rej" x="752" y="276" text-anchor="middle">crop too small or blurry &#183; no plate found</text>
+          <text class="svg-rej" x="752" y="292" text-anchor="middle">&#8594; out/crops/fail/</text>
+
+          <!-- ============ hand-off ============ -->
+          <path class="flow" d="M 447 222 L 447 320 L 142 320 L 142 462" marker-end="url(#a-flow)"></path>
+          <text class="svg-edge" x="300" y="312" text-anchor="middle">finished track: t_in, t_out, best crop</text>
+
+          <path class="ident" d="M 1057 222 L 1057 376 L 190 376 L 190 462" marker-end="url(#a-ident)"></path>
+          <text class="svg-ident" x="640" y="368" text-anchor="middle">plate, per-character conf, locked</text>
+
+          <!-- ============ band 2 ============ -->
+          <text class="svg-band" x="32" y="446">ONCE PER FINISHED TRACK &#183; ACROSS CAMERAS</text>
+
+          <rect class="svg-box" x="32" y="468" width="220" height="104"></rect>
+          <text class="svg-mod" x="48" y="496">build_sighting</text>
+          <text class="svg-own" x="236" y="496" text-anchor="end">P6</text>
+          <text class="svg-sub" x="48" y="522">one row per vehicle seen</text>
+          <text class="svg-sub" x="48" y="542">anything unknown stays None</text>
+          <text class="svg-sub" x="48" y="562">never "" , never "unknown"</text>
+
+          <rect class="svg-box" x="337" y="468" width="220" height="104"></rect>
+          <text class="svg-mod" x="353" y="496">database.py</text>
+          <text class="svg-own" x="541" y="496" text-anchor="end">P4</text>
+          <text class="svg-sub" x="353" y="522">cameras &#183; sightings &#183; links</text>
+          <text class="svg-sub" x="353" y="542">SQLite for the prototype</text>
+          <text class="svg-sub" x="353" y="562">crop path per sighting</text>
+
+          <rect class="svg-box" x="642" y="468" width="220" height="104"></rect>
+          <text class="svg-mod" x="658" y="496">linker.py</text>
+          <text class="svg-own" x="846" y="496" text-anchor="end">P4</text>
+          <text class="svg-sub" x="658" y="522">reject first, then score</text>
+          <text class="svg-sub" x="658" y="542">weighted plate edit distance</text>
+          <text class="svg-sub" x="658" y="562">clone alert on impossible gaps</text>
+
+          <rect class="svg-box" x="947" y="468" width="220" height="104"></rect>
+          <text class="svg-mod" x="963" y="496">visualizer.py</text>
+          <text class="svg-own" x="1151" y="496" text-anchor="end">P5</text>
+          <text class="svg-sub" x="963" y="522">out/frames/ annotated</text>
+          <text class="svg-sub" x="963" y="542">out/map.png, dots and lines</text>
+          <text class="svg-sub" x="963" y="562">dashed line = inferred route</text>
+
+          <path class="flow" d="M 258 520 L 331 520" marker-end="url(#a-flow)"></path>
+          <text class="svg-edge" x="294" y="508" text-anchor="middle">sighting row</text>
+
+          <path class="flow" d="M 563 520 L 636 520" marker-end="url(#a-flow)"></path>
+          <text class="svg-edge" x="599" y="508" text-anchor="middle">candidates</text>
+
+          <path class="flow" d="M 868 520 L 941 520" marker-end="url(#a-flow)"></path>
+          <text class="svg-edge" x="904" y="508" text-anchor="middle">links</text>
+
+          <path class="rej" d="M 752 578 L 752 614" marker-end="url(#a-rej)"></path>
+          <text class="svg-rej" x="752" y="632" text-anchor="middle">travel time impossible &#183; different vehicle type &#183; two clean plates that differ</text>
+          <text class="svg-rej" x="752" y="648" text-anchor="middle">no plate and no embedding &#8594; no link is written</text>
+        </svg>
+      </div>
+      <ul class="legend">
+        <li><span class="swatch sw-flow"></span> control and data flow</li>
+        <li><span class="swatch sw-ident"></span> the identity key: characters and their confidence</li>
+        <li><span class="swatch sw-reject"></span> rejected, nothing is recorded</li>
+      </ul>
+      <figcaption>
+        The blue thread is the only path that carries identity. Everything it touches &mdash; the
+        OCR budget, the vote, the link score &mdash; is tuned to drop evidence rather than guess
+        at it.
+      </figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Many bad reads, one plate</h2>
+    <p class="lede">
+      A vehicle is read on every frame it is visible and large enough. No single read is
+      trusted. <code>plate_logic.vote</code> weights each character by its OCR confidence times
+      the frame quality, so a sharp close-up outvotes a distant blur. Below is the actual output
+      of the self-test in <code>anpr/plate_logic.py</code>.
+    </p>
+
+    <div class="vote-grid">
+      <table class="data">
+        <tr>
+          <th>Read</th><th>Characters</th><th>Quality</th><th>Fate</th>
+        </tr>
+        <tr>
+          <td class="mono">1</td><td class="plate-str">GJ01AB1234</td><td class="mono">0.90</td>
+          <td><span class="ok-word">kept</span> &mdash; clean</td>
+        </tr>
+        <tr>
+          <td class="mono">2</td><td class="plate-str">GJ01A81234</td><td class="mono">0.70</td>
+          <td><span class="ok-word">kept</span> &mdash; 8 sits in a letter slot, so it becomes B and its confidence drops to 0.6&#215;</td>
+        </tr>
+        <tr class="dropped">
+          <td class="mono">3</td><td class="plate-str">GJ01AB234</td><td class="mono">0.50</td>
+          <td><span class="rej-word">dropped</span> &mdash; 9 characters loses the length vote</td>
+        </tr>
+        <tr>
+          <td class="mono">4</td><td class="plate-str">GJ0?AB1234</td><td class="mono">0.80</td>
+          <td><span class="ok-word">kept</span> &mdash; '?' contributes nothing at that position</td>
+        </tr>
+        <tr>
+          <td class="mono">5</td><td class="plate-str">GJ01AB1234</td><td class="mono">0.95</td>
+          <td><span class="ok-word">kept</span> &mdash; clean, highest quality</td>
+        </tr>
+      </table>
+
+      <div class="readout">
+        <div class="readout-head">
+          <span class="label">Voted result</span>
+          <span class="locked-pill">LOCKED &#183; 4 reads agreed</span>
+        </div>
+        <div class="chars">
+          <div class="char"><div class="glyph">G</div><div class="bar"><i style="height:91%"></i></div><div class="val">.91</div></div>
+          <div class="char"><div class="glyph">J</div><div class="bar"><i style="height:91%"></i></div><div class="val">.91</div></div>
+          <div class="char"><div class="glyph">0</div><div class="bar"><i style="height:91%"></i></div><div class="val">.91</div></div>
+          <div class="char"><div class="glyph">1</div><div class="bar"><i style="height:70%"></i></div><div class="val">.70</div></div>
+          <div class="char"><div class="glyph">A</div><div class="bar"><i style="height:91%"></i></div><div class="val">.91</div></div>
+          <div class="char corrected"><div class="glyph">B</div><div class="bar"><i style="height:80%"></i></div><div class="val">.80</div></div>
+          <div class="char"><div class="glyph">1</div><div class="bar"><i style="height:91%"></i></div><div class="val">.91</div></div>
+          <div class="char"><div class="glyph">2</div><div class="bar"><i style="height:91%"></i></div><div class="val">.91</div></div>
+          <div class="char"><div class="glyph">3</div><div class="bar"><i style="height:91%"></i></div><div class="val">.91</div></div>
+          <div class="char"><div class="glyph">4</div><div class="bar"><i style="height:91%"></i></div><div class="val">.91</div></div>
+        </div>
+        <p class="readout-foot">
+          Position 4 carries the dent from the one read that could not see it. Position 6, in
+          blue, is the character the format rules corrected from 8 to B and then discounted.
+          Both stay above <code>MIN_CHAR_CONF</code>, so the plate locks and the OCR budget for
+          this track is spent &mdash; no further frames are read.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The linker rejects before it scores</h2>
+    <p class="lede">
+      Linking two sightings is the only place the system can put an innocent car's number on
+      someone else's route. So four hard filters run first, each returning a flat zero and a
+      reason. A pair reaches the weighted score only after surviving all four.
+    </p>
+
+    <figure>
+      <div class="canvas">
+        <svg viewBox="0 0 1000 640" role="img"
+             aria-label="A candidate pair of sightings passes through four hard rejects in order: travel time impossible returns zero with reason implausible; different vehicle type returns zero with reason type mismatch; two clean plates that differ returns zero with reason different vehicle; neither a plate nor an embedding returns zero with reason insufficient evidence. Only survivors are scored, using plate similarity, embedding similarity and colour, and a link is written only if the score clears the threshold for its method.">
+
+          <defs>
+            <marker id="b-flow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="rgb(26,26,26)"></path>
+            </marker>
+            <marker id="b-rej" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M 0 0 L 10 5 L 0 10 z" fill="rgb(255,0,0)"></path>
+            </marker>
+          </defs>
+
+          <rect class="svg-box" x="260" y="16" width="340" height="46"></rect>
+          <text class="svg-mod" x="430" y="45" text-anchor="middle">candidate pair (a, b)</text>
+
+          <path class="flow" d="M 430 62 L 430 94" marker-end="url(#b-flow)"></path>
+          <rect class="svg-box" x="260" y="100" width="340" height="46"></rect>
+          <text class="svg-mod" x="430" y="129" text-anchor="middle">travel time plausible?</text>
+          <path class="rej" d="M 606 123 L 662 123" marker-end="url(#b-rej)"></path>
+          <text class="svg-rej" x="672" y="120">0.0 &#183; implausible</text>
+          <text class="svg-rej" x="672" y="136">CAMERA_GRAPH window, &#177; slack</text>
+
+          <path class="flow" d="M 430 146 L 430 178" marker-end="url(#b-flow)"></path>
+          <rect class="svg-box" x="260" y="184" width="340" height="46"></rect>
+          <text class="svg-mod" x="430" y="213" text-anchor="middle">same vehicle type?</text>
+          <path class="rej" d="M 606 207 L 662 207" marker-end="url(#b-rej)"></path>
+          <text class="svg-rej" x="672" y="204">0.0 &#183; type_mismatch</text>
+          <text class="svg-rej" x="672" y="220">a car is never a truck</text>
+
+          <path class="flow" d="M 430 230 L 430 262" marker-end="url(#b-flow)"></path>
+          <rect class="svg-box" x="260" y="268" width="340" height="46"></rect>
+          <text class="svg-mod" x="430" y="297" text-anchor="middle">two clean plates that differ?</text>
+          <path class="rej" d="M 606 291 L 662 291" marker-end="url(#b-rej)"></path>
+          <text class="svg-rej" x="672" y="288">0.0 &#183; different_vehicle</text>
+          <text class="svg-rej" x="672" y="304">clean = every character &#8805; 0.8</text>
+
+          <path class="flow" d="M 430 314 L 430 346" marker-end="url(#b-flow)"></path>
+          <rect class="svg-box" x="260" y="352" width="340" height="46"></rect>
+          <text class="svg-mod" x="430" y="381" text-anchor="middle">any plate or embedding left?</text>
+          <path class="rej" d="M 606 375 L 662 375" marker-end="url(#b-rej)"></path>
+          <text class="svg-rej" x="672" y="372">0.0 &#183; insufficient_evidence</text>
+          <text class="svg-rej" x="672" y="388">type + time + colour is every white car</text>
+
+          <path class="flow" d="M 430 398 L 430 430" marker-end="url(#b-flow)"></path>
+          <rect class="svg-box" x="180" y="436" width="500" height="104"></rect>
+          <rect class="svg-box-k" x="180" y="436" width="500" height="104"></rect>
+          <text class="svg-mod" x="200" y="464">score the survivors</text>
+          <text class="svg-sub" x="200" y="492">plate + embedding &#8594; 0.6&#183;plate + 0.3&#183;embed + 0.1&#183;colour</text>
+          <text class="svg-sub" x="200" y="512">plate, no embedding &#8594; (0.6&#183;plate + 0.1&#183;colour) / 0.7</text>
+          <text class="svg-sub" x="200" y="532">embedding, no plate &#8594; 0.75&#183;embed + 0.25&#183;colour</text>
+          <text class="svg-rej" x="700" y="470">below threshold</text>
+          <text class="svg-rej" x="700" y="486">&#8594; no link</text>
+          <path class="rej" d="M 686 494 L 686 530" marker-end="url(#b-rej)"></path>
+
+          <path class="flow" d="M 430 540 L 430 572" marker-end="url(#b-flow)"></path>
+          <rect class="svg-box" x="180" y="578" width="500" height="46"></rect>
+          <text class="svg-mod" x="430" y="601" text-anchor="middle">link written</text>
+          <text class="svg-edge" x="430" y="617" text-anchor="middle">exact &#183; fuzzy &#183; fuzzy_noembed clear LINK_FUZZY &#160;|&#160; inferred must clear LINK_INFERRED</text>
+        </svg>
+      </div>
+      <figcaption>
+        The plate edit distance is deliberately forgiving where OCR is known to slip &mdash;
+        0 / O, 1 / I, 8 / B, 5 / S, 2 / Z cost 0.3 instead of 1.0, and an unread '?' costs 0.1
+        &mdash; but gate three overrules all of it. Two plates both read cleanly and differing by
+        a real character are two vehicles, whatever the rest of the evidence says.
+      </figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Who owns what</h2>
+    <p class="lede">
+      Signatures are frozen. Every threshold lives in <code>config.py</code>, so tuning never
+      means editing someone else's module.
+    </p>
+    <table class="data">
+      <tr>
+        <th>Owner</th><th>Module</th><th>Responsible for</th>
+      </tr>
+      <tr>
+        <td>Person 1</td><td class="who">camera.py</td>
+        <td>Frames tagged with a camera id and a real unix timestamp, so two recordings share one clock. Also records the footage.</td>
+      </tr>
+      <tr>
+        <td>Person 2</td><td class="who">detector.py</td>
+        <td>Detection, tracking, colour and direction, and the single best crop per track. Appearance embeddings if time allows.</td>
+      </tr>
+      <tr>
+        <td>Person 3</td><td class="who">plate_reader.py <span class="hard">HARD</span></td>
+        <td>The identity key. Per-character probabilities, not one score for the whole plate &mdash; the vote needs them.</td>
+      </tr>
+      <tr>
+        <td>Person 4</td><td class="who">database.py<br>linker.py <span class="hard">HARD</span></td>
+        <td>Storage, the camera travel-time graph, candidate search and both link thresholds. Owns precision.</td>
+      </tr>
+      <tr>
+        <td>Person 5</td><td class="who">visualizer.py</td>
+        <td>Annotated frames, the map PNG, and every screenshot in the deck. Collects the limits the others report.</td>
+      </tr>
+      <tr>
+        <td>Person 6</td><td class="who">plate_logic.py<br>config.py<br>main.py <span class="hard">HARDEST</span></td>
+        <td>Format rules, voting, the scoring maths and the OCR budget. Joins the modules and merges to main.</td>
+      </tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>What this prototype does not do</h2>
+    <p class="lede">
+      Stated openly rather than hidden. These belong on the feasibility slide.
+    </p>
+    <ul class="limits">
+      <li>
+        <span class="who">Detection</span>
+        <p>Auto-rickshaws are not a COCO class. They currently come out as car or motorcycle, which then breaks the same-type filter in the linker.</p>
+      </li>
+      <li>
+        <span class="who">OCR</span>
+        <p>Two-line bike plates, painted truck plates and night glare all read poorly with the pretrained model. Failing crops are saved for a future fine-tuning set.</p>
+      </li>
+      <li>
+        <span class="who">Thresholds</span>
+        <p>Every weight and cutoff is a placeholder until roughly 50 hand-labelled pairs exist. The target is precision at or above 0.98, chosen over recall on purpose.</p>
+      </li>
+      <li>
+        <span class="who">Routes</span>
+        <p>The path between two cameras is inferred, never observed. The map draws it dashed for exactly that reason.</p>
+      </li>
+      <li>
+        <span class="who">Identity</span>
+        <p>An embedding-only link is low confidence and is never used alone to identify a vehicle. Without a plate and without an embedding, no link is written at all.</p>
+      </li>
+    </ul>
+  </section>
+
+  <p class="footer">
+    SIH26127 &nbsp;&#183;&nbsp; prototype scope: pretrained models, 3 test videos as cameras,
+    SQLite, one map PNG &nbsp;&#183;&nbsp; 6 days
+  </p>
+
+</div>
+
+</body>
+</html>

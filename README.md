@@ -10,6 +10,8 @@ database, one map PNG. No fine-tuning, no web dashboard.
 The full contract between the six of us is [`docs/build_instructions.md`](docs/build_instructions.md).
 Read it before writing a line. [`docs/decisions.md`](docs/decisions.md) records where the
 scaffold interprets that contract — read it before touching `linker.py` or `config.py`.
+[`docs/pipeline.html`](docs/pipeline.html) is the same thing as one diagram: open it in a
+browser, or share it with the team.
 
 ---
 
