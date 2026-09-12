@@ -180,6 +180,27 @@ def plausible(a: dict, b: dict, graph: dict, slack: float = 5.0) -> bool:
     return (win[0] - slack) <= dt <= (win[1] + slack)
 
 
+def embedding_cos(ea, eb) -> float | None:
+    """Cosine similarity of two appearance embeddings, mapped to 0..1.
+
+    Returns None when either side has no embedding. None means "no evidence",
+    which is NOT the same as "no similarity" — do not substitute a zero vector
+    for a missing embedding: a zero vector scores a neutral 0.5, which is
+    manufactured evidence. The caller must redistribute the weight instead.
+    """
+    if ea is None or eb is None:
+        return None
+    na, nb = float(np.linalg.norm(ea)), float(np.linalg.norm(eb))
+    if na == 0.0 or nb == 0.0:
+        return None                                  # degenerate vector, same as missing
+    return (float(np.dot(ea, eb) / (na * nb)) + 1) / 2
+
+
+def _is_clean(plate: str | None, conf: list[float] | None) -> bool:
+    """A plate we trust enough to use as a hard reject. No conf list -> not clean."""
+    return bool(plate) and bool(conf) and min(conf) >= 0.8
+
+
 def link_score(a: dict, b: dict, graph: dict) -> tuple[float, str]:
     """
     Returns (score 0..1, method). Link only if score >= threshold (tune on labeled pairs).
@@ -189,6 +210,7 @@ def link_score(a: dict, b: dict, graph: dict) -> tuple[float, str]:
       3. both plates clean & clearly different (hard) -> 0   # never merge two clean reads
       4. plate similarity        -> strong evidence
       5. embedding + colour      -> supporting / fallback
+      6. neither plate nor embedding -> 0, we are not identifying a car by its colour
     """
     if not plausible(a, b, graph):
         return 0.0, "implausible"
@@ -196,14 +218,12 @@ def link_score(a: dict, b: dict, graph: dict) -> tuple[float, str]:
         return 0.0, "type_mismatch"
 
     pa, pb = a["plate"], b["plate"]
-    clean_a = pa and min(a["conf"]) >= 0.8
-    clean_b = pb and min(b["conf"]) >= 0.8
 
     if pa and pb:
         d = plate_distance(pa, pb)
         if d == 0:
             return 1.0, "exact"
-        if clean_a and clean_b and d >= 1.0:
+        if _is_clean(pa, a.get("conf")) and _is_clean(pb, b.get("conf")) and d >= 1.0:
             return 0.0, "different_vehicle"          # rule 3
         plate_sim = max(0.0, 1.0 - d / 3.0)         # d=0 ->1, d=3 ->0
         method = "fuzzy"
@@ -211,15 +231,24 @@ def link_score(a: dict, b: dict, graph: dict) -> tuple[float, str]:
         plate_sim = None
         method = "inferred"                          # no plate on at least one side
 
-    emb_sim = float(np.dot(a["emb"], b["emb"]) /
-                    (np.linalg.norm(a["emb"]) * np.linalg.norm(b["emb"]) + 1e-9))
-    emb_sim = (emb_sim + 1) / 2                      # -1..1 -> 0..1
+    emb_sim = embedding_cos(a.get("emb"), b.get("emb"))
     colour_sim = 1.0 if a["colour"] == b["colour"] else 0.4
 
-    if plate_sim is not None:
+    if plate_sim is not None and emb_sim is not None:
         score = 0.6 * plate_sim + 0.3 * emb_sim + 0.1 * colour_sim
-    else:
+    elif plate_sim is not None:
+        # No embedding. Renormalise the surviving weights over 0.7 instead of
+        # letting a missing signal drag a good plate match below the threshold.
+        score = (0.6 * plate_sim + 0.1 * colour_sim) / 0.7
+        method = "fuzzy_noembed"
+    elif emb_sim is not None:
         score = 0.75 * emb_sim + 0.25 * colour_sim
+    else:
+        # No plate on one side AND no embedding: all that is left is vehicle type,
+        # travel time and colour. Every white car on the road matches that.
+        # A wrong link is worse than a missing link.
+        return 0.0, "insufficient_evidence"
+
     return score, method
 
 

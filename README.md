@@ -8,7 +8,8 @@ database, one map PNG. No fine-tuning, no web dashboard.
 > someone else's route. Every filter exists to reject.
 
 The full contract between the six of us is [`docs/build_instructions.md`](docs/build_instructions.md).
-Read it before writing a line.
+Read it before writing a line. [`docs/decisions.md`](docs/decisions.md) records where the
+scaffold interprets that contract — read it before touching `linker.py` or `config.py`.
 
 ---
 

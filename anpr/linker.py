@@ -7,8 +7,6 @@ wraps it so there is one implementation, not two. Person 4 owns the candidate
 search, the graph and the thresholds.
 """
 
-import numpy as np
-
 from . import config, database, plate_logic
 
 CAMERA_GRAPH = config.CAMERA_GRAPH
@@ -37,6 +35,9 @@ def link_all() -> list[dict]:
         for b in sightings[i + 1:]:
             score, method = link_score(a, b)
             threshold = config.LINK_INFERRED if method == "inferred" else config.LINK_FUZZY
+            # "exact" | "fuzzy" | "fuzzy_noembed" -> LINK_FUZZY
+            # "inferred"                          -> LINK_INFERRED (stricter, low confidence)
+            # everything else scores 0 and never links
             if score >= threshold:
                 database.save_link(a["id"], b["id"], score, method)
                 out.append({"a": a["id"], "b": b["id"], "score": score, "method": method})
@@ -66,6 +67,7 @@ def _as_point(s: dict) -> dict:
         "t": s["t_in"],
         "type": s.get("type"),
         "colour": s.get("colour"),
-        # person 2's embedding is optional; a zero vector scores a neutral 0.5
-        "emb": s.get("embedding") if s.get("embedding") is not None else np.zeros(512),
+        # May be None: person 2's embedding is optional. plate_logic handles the
+        # missing signal by redistributing its weight — never fake a vector here.
+        "emb": s.get("embedding"),
     }
