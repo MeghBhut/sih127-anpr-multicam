@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenCV Guide</title>
+    <style>
+        *{
+            padding: 0;
+            margin: 0;
+        }
+        .data-rep{
+            background-color: white;
+            border-collapse: collapse;
+        }
+        .data-rep tr th,td{
+            border: 1px solid rgb(26, 26, 26);
+            padding: 5px;
+        }
+        body {
+        font-family: Arial;
+        line-height: 1.6;
+        padding: 20px;
+        }
+        .comment{
+            color: grey;
+        }
+        .bash{
+            color: white;
+            background-color: black;
+            border: 1px solid grey;
+            padding: 10px;
+        }
+        .chat {
+        margin-bottom: 15px;
+        padding: 0 20px;
+        }
+        .you {
+        color: blue; font-weight: bold;
+        }
+        .guide {
+        color: green;
+        }
+        .red{
+            color: rgb(94, 255, 0);
+        }
+        .warning{
+            color: rgb(255, 0, 0); font-weight: bold;
+            font-size: 25px;
+        }
+        pre {
+        padding: 10px;
+        border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="warning">This is our first step. Learn OpenCV first, then YOLO detection, then Tracking (ByteTrack), then OCR for number plate.</div>
+
+    <div class="you">What is OpenCV and why we need it?</div>
+    <div class="chat">
+        <div class="guide">OpenCV is our eyes of the project. It is a library that helps computer to read image, video and webcam. YOLO detects objects but YOLO does NOT open camera or draw on screen. That work is done by OpenCV.</div>
+        <div class="guide">So in whole project OpenCV job is simple - take input (photo/video/webcam), give us the frame, we draw boxes and text on it, then show it on window. Thats all we need from OpenCV for now.</div>
+    </div>
+
+    <div class="you">Install OpenCV for our project?</div>
+    <div class="chat">
+        <div class="guide">Here is the minimal setup you need:</div>
+        <div class="bash">
+            <p>pip install opencv-python <span class="comment"># this is our OpenCV</span></p>
+            <p>pip install numpy <span class="comment"># frame is a numpy array so we need this too</span></p>
+        </div>
+        <div class="guide">In code we always import like this:</div>
+        <div class="bash">
+            <p>import cv2 as cv <span class="comment"># we write cv instead of cv2 everytime, short name</span></p>
+            <p>import numpy as np <span class="comment"># np is standard short name for numpy</span></p>
+        </div>
+    </div>
+
+    <div class="you">First tell me how to open a photo?</div>
+    <div class="chat">
+        <div class="guide">Simplest input is a image. Read it, show it, wait for key, then close window.</div>
+        <div class="bash">
+            <pre class="bash">
+import cv2 as cv
+
+frame = cv.imread("image.jpg") <span class="comment"># frame is a numpy array (H x W x 3, BGR)</span>
+
+cv.imshow("My Photo", frame) <span class="comment"># open a window named "My Photo" and show frame</span>
+cv.waitKey(0) <span class="comment"># 0 means wait forever till any key pressed</span>
+cv.destroyAllWindows() <span class="comment"># close all windows</span>
+</pre>
+        </div>
+        <div class="guide">Here <span class="red">frame</span> is not a normal picture, it is a numpy array of numbers. Each pixel has 3 values Blue Green Red (BGR not RGB, remember this OpenCV is BGR).</div>
+    </div>
+
+    <div class="you">What is this H x W x 3 thing?</div>
+    <div class="chat">
+        <div class="guide">Every frame in OpenCV is just a grid of numbers. Shape means how big that grid is.</div>
+        <table class="data-rep">
+            <tr>
+                <th>Part</th>
+                <th>Meaning</th>
+                <th>Example</th>
+            </tr>
+            <tr>
+                <td><b>H</b></td>
+                <td>Height (number of rows / pixels top to bottom)</td>
+                <td>480</td>
+            </tr>
+            <tr>
+                <td><b>W</b></td>
+                <td>Width (number of columns / pixels left to right)</td>
+                <td>640</td>
+            </tr>
+            <tr>
+                <td><b>3</b></td>
+                <td>3 color channels (Blue, Green, Red)</td>
+                <td>BGR</td>
+            </tr>
+        </table>
+        <div class="bash">
+            <p>print(frame.shape) <span class="comment"># output like (480, 640, 3) -> height, width, channels</span></p>
+        </div>
+        <div class="guide">This is important because when YOLO gives us box points (x1,y1,x2,y2), they are pixel positions on this same grid.</div>
+    </div>
+
+    <div class="you">Now how to open webcam or a video?</div>
+    <div class="chat">
+        <div class="guide">Photo is one frame only. Video and webcam is many frames coming one by one. So we use a loop to read them continuously.</div>
+        <div class="bash">
+            <pre class="bash">
+import cv2 as cv
+
+cap = cv.VideoCapture(0) <span class="comment"># 0 = default webcam. for video file put "video.mp4"</span>
+
+while True:
+    ret, frame = cap.read() <span class="comment"># ret = True/False (did we get a frame?), frame = the image</span>
+    if not ret: <span class="comment"># if no frame (camera off or video ended) then stop</span>
+        break
+
+    cv.imshow("Live Feed", frame) <span class="comment"># show current frame</span>
+
+    if cv.waitKey(1) & 0xFF == ord('q'): <span class="comment"># wait 1ms, if 'q' pressed then stop</span>
+        break
+
+cap.release() <span class="comment"># free the camera</span>
+cv.destroyAllWindows() <span class="comment"># close windows</span>
+</pre>
+        </div>
+        <div class="guide">This loop is the heart of full project. Every frame we will pass to YOLO, get boxes, draw them, show. Right now we only show plain frame.</div>
+    </div>
+
+    <div class="you">Tell me what these VideoCapture number/name means?</div>
+    <div class="chat">
+        <div class="guide">Same VideoCapture function but input decide what it reads. This is very useful for us because our project is MULTI CAMERA vehicle tracking.</div>
+        <table class="data-rep">
+            <tr>
+                <th>Input</th>
+                <th>What it opens</th>
+                <th>Use case</th>
+            </tr>
+            <tr>
+                <td><b>cv.VideoCapture(0)</b></td>
+                <td>Default webcam</td>
+                <td>Testing on laptop</td>
+            </tr>
+            <tr>
+                <td><b>cv.VideoCapture(1)</b></td>
+                <td>Second camera (USB cam)</td>
+                <td>Multi camera setup</td>
+            </tr>
+            <tr>
+                <td><b>cv.VideoCapture("clip.mp4")</b></td>
+                <td>Video file from disk</td>
+                <td>Testing on recorded footage</td>
+            </tr>
+            <tr>
+                <td><b>cv.VideoCapture("rtsp://...")</b></td>
+                <td>IP / CCTV camera stream</td>
+                <td>Real deployment (traffic cam)</td>
+            </tr>
+        </table>
+        <div class="warning">For our multi camera project each camera is just one VideoCapture. So one camera = one cap object. Keep this in mind.</div>
+    </div>
+
+    <div class="you">Now the main part - how to draw a bounding box?</div>
+    <div class="chat">
+        <div class="guide">Here green color is our box. YOLO will later give us x1,y1,x2,y2 points but for now we put them by hand to learn.</div>
+        <div class="guide">A box needs 2 corner points -> top-left (x1,y1) and bottom-right (x2,y2).</div>
+        <div class="bash">
+            <pre class="bash">
+import cv2 as cv
+
+frame = cv.imread("car.jpg")
+
+<span class="comment"># suppose these points came from YOLO later</span>
+x1, y1 = 100, 80   <span class="comment"># top-left corner</span>
+x2, y2 = 300, 250  <span class="comment"># bottom-right corner</span>
+
+<span class="comment"># draw rectangle: (frame, corner1, corner2, color BGR, thickness)</span>
+<span class="red">cv.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)</span>
+
+<span class="comment"># write text above the box: (frame, text, position, font, size, color, thickness)</span>
+<span class="red">cv.putText(frame, "Car", (x1, y1 - 10), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)</span>
+
+cv.imshow("Box Demo", frame)
+cv.waitKey(0)
+cv.destroyAllWindows()
+</pre>
+        </div>
+        <div class="guide">Remember color is (Blue, Green, Red). So (0,255,0) is pure green. (0,0,255) is red. (255,0,0) is blue.</div>
+    </div>
+
+    <div class="you">Explain rectangle and putText properly?</div>
+    <div class="chat">
+        <div class="guide">These 2 functions we will use most. Learn each part.</div>
+        <div class="guide"><b>cv.rectangle(frame, (x1,y1), (x2,y2), color, thickness)</b></div>
+        <table class="data-rep">
+            <tr>
+                <th>Part</th>
+                <th>Meaning</th>
+            </tr>
+            <tr>
+                <td>frame</td>
+                <td>the image we draw on</td>
+            </tr>
+            <tr>
+                <td>(x1, y1)</td>
+                <td>top-left corner point</td>
+            </tr>
+            <tr>
+                <td>(x2, y2)</td>
+                <td>bottom-right corner point</td>
+            </tr>
+            <tr>
+                <td>color</td>
+                <td>BGR color of box line</td>
+            </tr>
+            <tr>
+                <td>thickness</td>
+                <td>line thickness in pixels (-1 = fill full box)</td>
+            </tr>
+        </table>
+        <br>
+        <div class="guide"><b>cv.putText(frame, text, (x,y), font, scale, color, thickness)</b></div>
+        <table class="data-rep">
+            <tr>
+                <th>Part</th>
+                <th>Meaning</th>
+            </tr>
+            <tr>
+                <td>text</td>
+                <td>what to write (like "Car" or id number)</td>
+            </tr>
+            <tr>
+                <td>(x, y)</td>
+                <td>bottom-left point where text starts</td>
+            </tr>
+            <tr>
+                <td>font</td>
+                <td>cv.FONT_HERSHEY_SIMPLEX (standard one)</td>
+            </tr>
+            <tr>
+                <td>scale</td>
+                <td>size of text (0.6 is good)</td>
+            </tr>
+            <tr>
+                <td>color / thickness</td>
+                <td>same as rectangle</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="you">Some other small things I should know?</div>
+    <div class="chat">
+        <div class="guide">Yes few extra OpenCV things that come useful in our project.</div>
+        <div class="bash">
+            <pre class="bash">
+<span class="comment"># resize a frame (useful when camera frame is too big/slow)</span>
+frame = cv.resize(frame, (640, 480)) <span class="comment"># (width, height)</span>
+
+<span class="comment"># convert color BGR to grey (some steps need grey image)</span>
+grey = cv.cvtColor(frame, cv.COLOR_BGR2GRAY)
+
+<span class="comment"># crop a part of frame (this is how we cut number plate for OCR later)</span>
+crop = frame[y1:y2, x1:x2] <span class="comment"># numpy slicing -> rows first, then columns</span>
+
+<span class="comment"># save a frame as image file</span>
+cv.imwrite("saved.jpg", frame)
+
+<span class="comment"># draw a dot / circle (we can use this for the point on holograph map)</span>
+cv.circle(frame, (cx, cy), 5, (0, 0, 255), -1) <span class="comment"># center, radius, color, -1 = filled</span>
+
+<span class="comment"># draw a line</span>
+cv.line(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+</pre>
+        </div>
+        <div class="guide">That <span class="red">crop = frame[y1:y2, x1:x2]</span> line is very important. When we detect a vehicle later, we cut only that box area and send to OCR to read the number plate.</div>
+    </div>
+
+    <div class="you">Give me one small full program to test everything?</div>
+    <div class="chat">
+        <div class="guide">Run this. It opens webcam, draws one fixed box and text on every frame, and shows live. Press q to quit. If this runs then your OpenCV is ready.</div>
+        <div class="bash">
+            <pre class="bash">
+import cv2 as cv
+import numpy as np
+
+cap = cv.VideoCapture(0) <span class="comment"># open webcam</span>
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    <span class="comment"># draw a test box and text (later YOLO will give real points)</span>
+    cv.rectangle(frame, (100, 100), (300, 300), (0, 255, 0), 2)
+    cv.putText(frame, "Test Box", (100, 90), cv.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+    cv.imshow("OpenCV Test", frame)
+
+    if cv.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv.destroyAllWindows()
+</pre>
+        </div>
+    </div>
+
+    <div class="warning">There is nothing more we need from OpenCV right now for our project. Important facts to remember are following</div>
+    <div class="guide">
+        - OpenCV is only for input and drawing. Detection is YOLO's job, tracking is ByteTrack's job, reading plate is OCR's job. OpenCV just handles camera and drawing on screen. <br>
+        - OpenCV uses BGR order not RGB. So color (0,255,0) is green, (0,0,255) is red. Dont get confused. <br>
+        - frame is a numpy array (Height x Width x 3). Box points x1,y1,x2,y2 are pixel positions on this array. <br>
+        - The while loop (cap.read -> draw -> imshow -> waitKey) is the main loop of full project. We only add YOLO and tracking inside it later. <br>
+        - crop = frame[y1:y2, x1:x2] is how we cut a detected object to send for number plate OCR. <br>
+        - For our multi camera project, each camera is one VideoCapture object. One camera = one cap. <br>
+        - Always release the camera (cap.release) and destroy windows at end, otherwise camera stays busy. <br>
+    </div>
+
+    <div class="warning">next -> YOLO Object Detection.</div>
+
+</body>
+</html>

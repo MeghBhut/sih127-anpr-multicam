@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YOLO Internals Guide</title>
+    <style>
+        *{
+            padding: 0;
+            margin: 0;
+        }
+        .data-rep{
+            background-color: white;
+            border-collapse: collapse;
+        }
+        .data-rep tr th,td{
+            border: 1px solid rgb(26, 26, 26);
+            padding: 5px;
+        }
+        body {
+        font-family: Arial;
+        line-height: 1.6;
+        padding: 20px;
+        }
+        .comment{
+            color: grey;
+        }
+        .bash{
+            color: white;
+            background-color: black;
+            border: 1px solid grey;
+            padding: 10px;
+        }
+        .chat {
+        margin-bottom: 15px;
+        padding: 0 20px;
+        }
+        .you {
+        color: blue; font-weight: bold;
+        }
+        .guide {
+        color: green;
+        }
+        .red{
+            color: rgb(94, 255, 0);
+        }
+        .warning{
+            color: rgb(255, 0, 0); font-weight: bold;
+            font-size: 25px;
+        }
+        .note{
+            color: rgb(200, 120, 0); font-weight: bold;
+        }
+        pre {
+        padding: 10px;
+        border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="warning">This is the DEEP guide - how YOLO actually thinks inside. No need to write code. This is to understand the logic - why YOLO, grids, tensors, backbone neck head.</div>
+
+    <div class="you">First - Why YOLO? What does "You Only Look Once" even mean?</div>
+    <div class="chat">
+        <div class="guide">The name is the whole idea. YOLO looks at the full image only ONE time (one pass) and predicts every box in that single look. Thats why it is fast enough for live video.</div>
+        <div class="guide">Before YOLO, detectors did NOT work like this. They used to take a small window and slide it all over the image, running a CNN again and again on each little region, checking "object here? object here? object here?" - thousands of CNN runs for one image. Very slow, no chance for real-time.</div>
+        <table class="data-rep">
+            <tr>
+                <th>Old way (before YOLO)</th>
+                <th>YOLO way</th>
+            </tr>
+            <tr>
+                <td>Slide a window / propose many regions</td>
+                <td>Cut image into a grid once</td>
+            </tr>
+            <tr>
+                <td>Run CNN thousands of times per image</td>
+                <td>Run CNN ONE time per image</td>
+            </tr>
+            <tr>
+                <td>Slow, heavy, not live</td>
+                <td>Fast, real-time, many cameras</td>
+            </tr>
+        </table>
+        <div class="warning">This is exactly why our multi-camera vehicle project uses YOLO - one look per frame means we can handle live feeds. The GRID method is what makes "one look" possible. Next we see how that grid is built.</div>
+    </div>
+
+    <div class="you">Now show me how the grid is actually built. 640x640x3 to 160x160... how?</div>
+    <div class="chat">
+        <div class="guide">The image enters as 640 x 640 with 3 channels (BGR). Then layer by layer the network shrinks the floor and grows the channels. It does not jump straight to 160, it halves step by step.</div>
+        <div class="bash">
+            <pre class="bash">
+640 x 640 x 3      <span class="comment"># input image (3 color channels)</span>
+   |  (halve)
+320 x 320 x 32     <span class="comment"># floor halved, channels grew</span>
+   |  (halve)
+160 x 160 x 48     <span class="comment"># floor halved again, more channels</span>
+   |  ... keeps going down to 20 x 20 later
+</pre>
+        </div>
+        <div class="guide">Each halving step takes a small group of NEAR pixels (a 2x2 block = 4 neighbours) and squeezes them into ONE new cell. So detail floor shrinks, but we add more channels to store richer info about that squeezed area.</div>
+        <div class="note">Note: exact channel numbers (32, 48, 64...) depend on model size n/s/m/l/x. The number is not important, the IDEA is: floor down, channels up.</div>
+    </div>
+
+    <div class="you">But how does 4 near pixels become 1? Who decides the new numbers?</div>
+    <div class="chat">
+        <div class="guide">A small filter sits on those 4 (actually a small patch) neighbour pixels, multiplies them by some weights, and adds up to make the one new number. That weight set is what decides how neighbours combine.</div>
+        <div class="guide">And here is the key point you were asking - <span class="red">those weight values are TRAINED values.</span> During COCO training the model saw thousands of images and slowly fixed these weights to good numbers. We do NOT calculate them. They already sit inside yolo11l.pt. We just load and use.</div>
+        <div class="guide">What did these trained weights learn to detect?</div>
+        <table class="data-rep">
+            <tr>
+                <th>Layer depth</th>
+                <th>What its filters learned</th>
+            </tr>
+            <tr>
+                <td><b>1st layers (shallow)</b></td>
+                <td>simple things - edges, lines, corners, colors</td>
+            </tr>
+            <tr>
+                <td><b>middle layers</b></td>
+                <td>parts - a wheel curve, a window shape, a headlight</td>
+            </tr>
+            <tr>
+                <td><b>deep layers</b></td>
+                <td>full concept - "this whole thing is a car"</td>
+            </tr>
+        </table>
+        <div class="guide">So the FIRST layer just finds edges and lines. The NEXT layer takes those edges and joins them into bigger features, and so on. Small patterns build into big patterns as we go deeper. Thats the whole learning stack.</div>
+    </div>
+
+    <div class="you">What is stride? People keep saying it.</div>
+    <div class="chat">
+        <div class="guide">Stride = the step size the filter jumps as it slides. Stride 1 means move 1 pixel each step (floor stays same size). Stride 2 means jump 2 pixels each step, so it skips and the output floor becomes HALF. Thats how downsampling happens.</div>
+        <div class="guide">There is also a total stride from the input. It means "how many original pixels does one cell now stand for".</div>
+        <table class="data-rep">
+            <tr>
+                <th>Feature floor</th>
+                <th>Total stride</th>
+                <th>One cell = how many input pixels</th>
+            </tr>
+            <tr>
+                <td>320 x 320</td>
+                <td>2</td>
+                <td>2 x 2 area</td>
+            </tr>
+            <tr>
+                <td>160 x 160</td>
+                <td>4</td>
+                <td>4 x 4 area</td>
+            </tr>
+            <tr>
+                <td>80 x 80</td>
+                <td>8</td>
+                <td>8 x 8 area</td>
+            </tr>
+            <tr>
+                <td>40 x 40</td>
+                <td>16</td>
+                <td>16 x 16 area</td>
+            </tr>
+            <tr>
+                <td>20 x 20</td>
+                <td>32</td>
+                <td>32 x 32 area</td>
+            </tr>
+        </table>
+        <div class="guide">So bigger stride = smaller grid = each cell covers a bigger chunk of the real image. Remember this, it comes back when we pick which grid detects small vs big objects.</div>
+    </div>
+
+    <div class="you">Ok now the tensor / cube part. I imagine image as a cube.</div>
+    <div class="chat">
+        <div class="guide">Your cube imagination is correct, just make it exact. A tensor is only a box of numbers. The number of directions (axes) it has, is its dimension.</div>
+        <table class="data-rep">
+            <tr>
+                <th>Tensor</th>
+                <th>Shape</th>
+                <th>Think of it as</th>
+            </tr>
+            <tr>
+                <td><b>1D</b></td>
+                <td>(5)</td>
+                <td>a single row of numbers (a line)</td>
+            </tr>
+            <tr>
+                <td><b>2D</b></td>
+                <td>(H, W)</td>
+                <td>a grey image, one number per pixel (a sheet)</td>
+            </tr>
+            <tr>
+                <td><b>3D</b></td>
+                <td>(C, H, W)</td>
+                <td>a color image = your CUBE. C sheets stacked</td>
+            </tr>
+            <tr>
+                <td><b>4D</b></td>
+                <td>(N, C, H, W)</td>
+                <td>many cubes together (a batch of images)</td>
+            </tr>
+        </table>
+        <div class="guide">So one color image is a 3D cube. Height and Width is the floor, and C (channels) is how tall the stack is. For a normal photo C=3 (the BGR sheets). Deeper in the network the same cube has a small floor but a very tall channel stack.</div>
+        <div class="note">Note: OpenCV shows image as (H, W, C). PyTorch/YOLO uses (C, H, W). Same cube, just axis order different. Dont get confused.</div>
+    </div>
+
+    <div class="you">Then what is this 4D tensor, why one extra?</div>
+    <div class="chat">
+        <div class="guide">Because computer never process one image alone, it process a BATCH (many images at once, faster on GPU). So we stack many cubes and get 4D.</div>
+        <table class="data-rep">
+            <tr>
+                <th>Axis</th>
+                <th>Letter</th>
+                <th>Meaning</th>
+            </tr>
+            <tr>
+                <td>1st</td>
+                <td><b>N</b></td>
+                <td>batch - how many images together</td>
+            </tr>
+            <tr>
+                <td>2nd</td>
+                <td><b>C</b></td>
+                <td>channels - how many sheets in each cube</td>
+            </tr>
+            <tr>
+                <td>3rd</td>
+                <td><b>H</b></td>
+                <td>height of the cube floor</td>
+            </tr>
+            <tr>
+                <td>4th</td>
+                <td><b>W</b></td>
+                <td>width of the cube floor</td>
+            </tr>
+        </table>
+        <div class="bash">
+            <pre class="bash">
+<span class="comment"># one image cube</span>
+image = (3, 640, 640)      <span class="comment"># 3 channels, 640x640 floor</span>
+
+<span class="comment"># batch of 8 images = 4D tensor</span>
+batch = (8, 3, 640, 640)   <span class="comment"># N=8, C=3, H=640, W=640</span>
+</pre>
+        </div>
+        <div class="guide">So remember simply: <span class="red">4D tensor = a pile of image cubes</span>. N is just how many cubes in the pile. Everything inside YOLO travels as this 4D shape.</div>
+    </div>
+
+    <div class="you">And channels - only colors, or something else?</div>
+    <div class="chat">
+        <div class="guide">At the START yes, channels are colors (3 = B,G,R). But INSIDE the network channels stop being colors and become FEATURES.</div>
+        <div class="guide">A feature is just "some pattern the layer found" - an edge, a wheel shape, a headlight shape. Each channel is one detector of one pattern. So a cube with C=256 means 256 different pattern-sheets stacked.</div>
+        <div class="warning">Key mind-shift: deeper we go, channels are NOT colors anymore, they are learned features/patterns.</div>
+    </div>
+
+    <div class="you">Now shallow vs deep - take me down till 20x20.</div>
+    <div class="chat">
+        <div class="guide">This is the core logic, get it clean. As the cube goes DEEPER, two things happen together - floor keeps shrinking, meaning keeps getting stronger.</div>
+        <table class="data-rep">
+            <tr>
+                <th>Stage</th>
+                <th>Floor (H x W)</th>
+                <th>Channels</th>
+                <th>Detail (position)</th>
+                <th>Feature strength (meaning)</th>
+            </tr>
+            <tr>
+                <td><b>Shallow (early)</b></td>
+                <td>BIG (160x160 / 80x80)</td>
+                <td>few (48...)</td>
+                <td>HIGH - sharp, exact position</td>
+                <td>WEAK - only edges, colors (dumb)</td>
+            </tr>
+            <tr>
+                <td><b>Middle</b></td>
+                <td>medium (40x40)</td>
+                <td>more (512)</td>
+                <td>medium</td>
+                <td>medium - shapes, parts</td>
+            </tr>
+            <tr>
+                <td><b>Deep (late)</b></td>
+                <td>SMALL (20x20)</td>
+                <td>many (1024)</td>
+                <td>LOW - blurry position, coarse</td>
+                <td>STRONG - "this is a car" (smart)</td>
+            </tr>
+        </table>
+        <div class="guide">Correct sentence to remember: <span class="red">shallow = sharp detail but dumb. deep = smart meaning but blurry.</span> The cube ends at 20x20 with a huge channel stack (like 1024).</div>
+    </div>
+
+    <div class="you">At 20x20 with 1024 channels - what do those 1024 actually represent?</div>
+    <div class="chat">
+        <div class="guide">Very good question, this is the heart. At 20x20 there are only 400 cells. But each cell now carries 1024 numbers stacked on it. Those 1024 numbers are like 1024 answers to 1024 learned questions about that spot.</div>
+        <div class="guide">Imagine for one cell the 1024 channels silently answer things like:</div>
+        <div class="bash">
+            <pre class="bash">
+channel 1   -> how much "wheel-ness" is here?
+channel 2   -> how much "metal surface"?
+channel 3   -> how much "car-roof shape"?
+channel 4   -> how much "headlight"?
+...                     (up to 1024 learned patterns)
+channel 1024 -> how much "windscreen curve"?
+</pre>
+        </div>
+        <div class="guide">So one cell is no longer a color pixel - it is a rich 1024-length description (a fingerprint) of "what kind of object sits around here". Thats why deep = smart. The model can now say "this fingerprint looks like a car". But because the floor is only 20x20, it lost the sharp position, and small far objects already vanished at this size.</div>
+        <div class="warning">1024 channels = 1024 learned feature-answers per cell. Rich meaning, poor position. Hold this thought - it explains why we need the neck next.</div>
+    </div>
+
+    <div class="you">So if deep lost position and small objects - how do we fix it? The neck?</div>
+    <div class="chat">
+        <div class="guide">Exactly. The problem: the deep 20x20 grid is smart but it dropped small objects and exact position. Meanwhile the shallow 80x80 and 40x40 grids STILL have those small objects and sharp position - but they are dumb (weak features).</div>
+        <div class="guide">So neither grid alone is good. The NECK's job is to make all three grids share their strengths so <span class="red">no feature gets dropped</span>. It connects 20x20, 40x40 and 80x80 and mixes them.</div>
+        <div class="note">Simple line: deep grid has the brain, shallow grids have the eyes for small/near-exact stuff. Neck joins brain + eyes on all three grids.</div>
+    </div>
+
+    <div class="you">Give me FPN and PAN full form and how they take the features (no heavy math).</div>
+    <div class="chat">
+        <div class="guide">The neck is made of two flows, running in opposite directions:</div>
+        <table class="data-rep">
+            <tr>
+                <th>Flow</th>
+                <th>Full form</th>
+                <th>Direction</th>
+                <th>What it carries (simple)</th>
+            </tr>
+            <tr>
+                <td><b>FPN</b></td>
+                <td>Feature Pyramid Network</td>
+                <td>Top -> Down (20 -> 40 -> 80)</td>
+                <td>takes STRONG meaning from the deep 20x20 grid, blows it up bigger, and pours it into 40x40 and 80x80 so those sharp grids also become smart</td>
+            </tr>
+            <tr>
+                <td><b>PAN</b></td>
+                <td>Path Aggregation Network</td>
+                <td>Bottom -> Up (80 -> 40 -> 20)</td>
+                <td>takes SHARP position from the shallow 80x80 grid, shrinks it down, and pushes it into 40x40 and 20x20 so those smart grids also get exact position</td>
+            </tr>
+        </table>
+        <div class="guide">How they "take" features is simple: FPN upsamples the small deep grid (makes it bigger) and merges it onto the bigger grid. PAN downsamples the big shallow grid (makes it smaller) and merges it onto the smaller grid. Merge just means put the two feature stacks together. No formula needed - just resize and combine.</div>
+        <div class="warning">After FPN + PAN, all three grids (80, 40, 20) are now GOOD - each has strong meaning AND sharp position. Nothing important is dropped. Thats the entire purpose of the neck.</div>
+    </div>
+
+    <div class="you">Now the 3 body parts and the 3 grids together.</div>
+    <div class="chat">
+        <div class="guide">The whole YOLO body is only 3 parts, like a factory line.</div>
+        <table class="data-rep">
+            <tr>
+                <th>Part</th>
+                <th>Job (simple)</th>
+                <th>What it makes</th>
+            </tr>
+            <tr>
+                <td><b>1. Backbone</b></td>
+                <td>Look at image, extract features, downsample. Cube shrinks, channels grow.</td>
+                <td>3 feature cubes: 80x80, 40x40, 20x20</td>
+            </tr>
+            <tr>
+                <td><b>2. Neck (FPN+PAN)</b></td>
+                <td>Mix the 3 cubes so features travel between layers and nothing drops.</td>
+                <td>3 improved cubes (same sizes)</td>
+            </tr>
+            <tr>
+                <td><b>3. Head</b></td>
+                <td>Read each grid cell and predict box + class.</td>
+                <td>final boxes, class, confidence</td>
+            </tr>
+        </table>
+        <div class="guide">And the 3 grids split the work by object size (because of stride):</div>
+        <table class="data-rep">
+            <tr>
+                <th>Grid</th>
+                <th>Stride</th>
+                <th>Best for</th>
+            </tr>
+            <tr>
+                <td><b>80 x 80</b></td>
+                <td>8</td>
+                <td>SMALL objects (far vehicle)</td>
+            </tr>
+            <tr>
+                <td><b>40 x 40</b></td>
+                <td>16</td>
+                <td>MEDIUM objects</td>
+            </tr>
+            <tr>
+                <td><b>20 x 20</b></td>
+                <td>32</td>
+                <td>LARGE objects (near truck)</td>
+            </tr>
+        </table>
+        <div class="guide">Flow in one line: <span class="red">Image -> Backbone -> Neck -> Head -> boxes.</span> Backbone sees, Neck mixes, Head decides.</div>
+    </div>
+
+    <div class="you">Extra: inside the backbone there are names like Conv, C2f, SPPF. What are these?</div>
+    <div class="chat">
+        <div class="guide">These are just NAMES of the small building blocks stacked inside the backbone. Think of the backbone like a line of little machines, one after another, image passes through each. You do NOT need to understand them for our project - just know they exist so no name confuses you.</div>
+        <div class="bash">
+<pre class="bash">
+Image
+  |
+ Conv     <span class="comment"># slides filters, finds edges/patterns, downsamples</span>
+  |
+ C2f      <span class="comment"># a feature-mixing block (helps info flow)</span>
+  |
+ Conv
+  |
+ C2f
+  |
+ SPPF     <span class="comment"># last block - looks at many scales so big & small both caught</span>
+  |
+ -> Neck (FPN + PAN) -> Head
+</pre>
+        </div>
+        <table class="data-rep">
+            <tr>
+                <th>Block</th>
+                <th>Basic idea (thats enough)</th>
+            </tr>
+            <tr>
+                <td><b>Conv</b></td>
+                <td>Convolution layer - slides filters, finds patterns, and does the downsampling (stride)</td>
+            </tr>
+            <tr>
+                <td><b>C2f / C3k2</b></td>
+                <td>A feature-mixing block. Just helps features flow better. (C2f in v8, C3k2 in v11 - different name, same purpose)</td>
+            </tr>
+            <tr>
+                <td><b>SPPF</b></td>
+                <td>Spatial Pyramid Pooling Fast - looks at the image at many scales at once, so near AND far objects get noticed</td>
+            </tr>
+        </table>
+        <div class="warning">Do NOT get stuck on these names. For our project we never touch them, YOLO already has them built inside. Just remember: Backbone = a stack of Conv + C2f blocks ending with SPPF. Thats all you need.</div>
+    </div>
+
+    <div class="you">Last - what does the head actually output?</div>
+    <div class="chat">
+        <div class="guide">Head output is also a tensor. For each of the 3 grids, the head looks at every cell and writes down the box numbers + the class scores.</div>
+        <div class="bash">
+            <pre class="bash">
+<span class="comment"># one scale head output (rough idea, COCO = 80 classes)</span>
+output = (N, 84, H, W)     <span class="comment"># 84 = 4 box values + 80 class scores, per cell</span>
+
+80x80 grid -> lots of small-object predictions
+40x40 grid -> medium-object predictions
+20x20 grid -> large-object predictions
+</pre>
+        </div>
+        <div class="guide">Then YOLO automatically cleans it up - drops the low-confidence ones and removes duplicate boxes sitting on the same object. What survives is the clean final boxes you used in code (box.xyxy, box.cls, box.conf).</div>
+        <div class="note">Note: this auto-cleanup has a name (NMS) but for our project you do NOT need to understand it. YOLO does it for us and just hands over the final boxes.</div>
+        <div class="note">Note: YOLO11 is "anchor-free" - each cell predicts the box directly. Old YOLO used pre-set "anchor box" templates. No anchor math needed for us.</div>
+    </div>
+
+    <div class="you">Give me the whole story in one shot so it sticks.</div>
+    <div class="chat">
+        <div class="guide">Full journey of one image, top to bottom:</div>
+        <div class="bash">
+            <pre class="bash">
+1. Image in as 4D tensor         (N, 3, 640, 640)   <span class="comment"># pile of cubes</span>
+2. BACKBONE (trained filters)    floor 640 -> 20, channels 3 -> 1024
+   shallow=edges, deep=concepts  gives 3 grids: 80x80, 40x40, 20x20
+3. NECK  FPN (top-down meaning)   + PAN (bottom-up position)
+   all 3 grids now smart+sharp    nothing dropped
+4. HEAD reads every cell          predicts box(4) + class(80) per cell
+5. Auto cleanup                  drop weak + duplicate boxes
+6. OUT -> box.xyxy, box.cls, box.conf   <span class="comment"># the answer we use in code</span>
+</pre>
+        </div>
+    </div>
+
+    <div class="warning">Core facts to lock in your memory</div>
+    <div class="guide">
+        - YOLO = You Only Look Once. One CNN pass per image using a grid. Before YOLO, detectors slid a window and ran CNN thousands of times per image - too slow for live. <br>
+        - The image shrinks step by step: floor halves (near pixels merge), channels grow. The merge weights are TRAINED values, already inside the .pt file. <br>
+        - First layers learn edges/lines, deeper layers join them into parts, deepest into full objects. <br>
+        - Stride = step size / how many input pixels one cell stands for. Big stride = small grid = big objects. <br>
+        - Image = 3D cube (C,H,W). Batch = 4D tensor (N,C,H,W). N = how many cubes piled. <br>
+        - Channels start as colors (3) but become learned FEATURES deeper in. <br>
+        - Shallow = sharp but dumb. Deep = smart but blurry. At 20x20, the 1024 channels = 1024 learned feature-answers per cell (a rich fingerprint of the object). <br>
+        - Deep grid dropped small objects + position, so NECK connects 80/40/20. FPN (Feature Pyramid Network) carries meaning top-down, PAN (Path Aggregation Network) carries position bottom-up. Both just resize + merge. Nothing drops. <br>
+        - Backbone sees, Neck mixes, Head decides. Head outputs box+class per cell, then YOLO auto-cleans (drops weak + duplicate boxes) to give final boxes. NMS is the name of this step but no need to go deep for our project. <br>
+        - YOLO11 is anchor-free. No anchor math needed for us. <br>
+    </div>
+
+    <div class="warning">This is the base logic. This is all needed for this project.</div>
+    <div class="warning">Next -> ByteTrack in YOLO.</div>
+
+</body>
+</html>

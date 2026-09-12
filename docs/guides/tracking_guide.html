@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tracking Guide</title>
+    <style>
+        *{
+            padding: 0;
+            margin: 0;
+        }
+        .data-rep{
+            background-color: white;
+            border-collapse: collapse;
+        }
+        .data-rep tr th,td{
+            border: 1px solid rgb(26, 26, 26);
+            padding: 5px;
+        }
+        body {
+        font-family: Arial;
+        line-height: 1.6;
+        padding: 20px;
+        }
+        .comment{
+            color: grey;
+        }
+        .bash{
+            color: white;
+            background-color: black;
+            border: 1px solid grey;
+            padding: 10px;
+        }
+        .chat {
+        margin-bottom: 15px;
+        padding: 0 20px;
+        }
+        .you {
+        color: blue; font-weight: bold;
+        }
+        .guide {
+        color: green;
+        }
+        .red{
+            color: rgb(94, 255, 0);
+        }
+        .warning{
+            color: rgb(255, 0, 0); font-weight: bold;
+            font-size: 25px;
+        }
+        .note{
+            color: rgb(200, 120, 0); font-weight: bold;
+        }
+        pre {
+        padding: 10px;
+        border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="warning">Step 3 - Tracking. You know OpenCV (input+draw) and YOLO (detect). Now Tracking gives each object a fixed ID so we can follow the SAME car frame after frame. After this comes OCR (number plate). This guide is single camera only.</div>
+
+    <div class="you">Why do we even need tracking? YOLO already detects.</div>
+    <div class="chat">
+        <div class="guide">Because YOLO has NO memory. Every frame YOLO looks fresh and gives new boxes. It does not know the car in frame 2 is the same car from frame 1. To YOLO every frame is a brand new world.</div>
+        <div class="guide">For our project we must FOLLOW a vehicle - count it, track its path, read its plate once, not again and again. For that each vehicle needs a fixed ID that stays same while it is on screen. <span class="red">Giving that stable ID is the tracker's only job.</span></div>
+        <table class="data-rep">
+            <tr>
+                <th>Only YOLO</th>
+                <th>YOLO + Tracker</th>
+            </tr>
+            <tr>
+                <td>Box appears, but no name/number</td>
+                <td>Box appears with a fixed ID (e.g. ID 7)</td>
+            </tr>
+            <tr>
+                <td>Same car looks new every frame</td>
+                <td>Same car keeps ID 7 across frames</td>
+            </tr>
+            <tr>
+                <td>Cant count or follow</td>
+                <td>Can count, follow path, read plate once</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="you">How does a tracker keep the same ID? What is the logic?</div>
+    <div class="chat">
+        <div class="guide">Very simple idea. Tracker looks at last frame's boxes and this frame's new boxes, and tries to MATCH them - "which new box is the same object as which old box?". If matched, it keeps the old ID. If a box matches nothing, it is a new object and gets a new ID.</div>
+        <div class="guide">To match, tracker uses two clues:</div>
+        <table class="data-rep">
+            <tr>
+                <th>Clue</th>
+                <th>Meaning</th>
+                <th>Simple word</th>
+            </tr>
+            <tr>
+                <td><b>Motion</b></td>
+                <td>It predicts where the old box should move next (a car moving right will be a bit more right). Then matches by overlap. (This predictor is called a Kalman filter.)</td>
+                <td>"where should it be?"</td>
+            </tr>
+            <tr>
+                <td><b>Appearance (Re-ID)</b></td>
+                <td>It remembers what the object looks like (a color/shape fingerprint) and matches by looks. Helps when two cars cross each other.</td>
+                <td>"what does it look like?"</td>
+            </tr>
+        </table>
+        <div class="guide">Motion is fast and cheap. Appearance is heavier but saves us when objects cross or hide for a moment. Good trackers use both.</div>
+    </div>
+
+    <div class="you">There are many trackers - ByteTrack, DeepSORT etc. Which one for us?</div>
+    <div class="chat">
+        <div class="guide">Here is the short compare. Only the first two matter for us because they come built-in inside YOLO (ultralytics), no extra library.</div>
+        <table class="data-rep">
+            <tr>
+                <th>Tracker</th>
+                <th>Uses</th>
+                <th>Speed</th>
+                <th>Built in YOLO?</th>
+            </tr>
+            <tr>
+                <td><b>ByteTrack</b></td>
+                <td>Motion only (fast, also keeps low-confidence boxes so nothing drops)</td>
+                <td>⚡ Fastest</td>
+                <td>✅ Yes</td>
+            </tr>
+            <tr>
+                <td><b>BoT-SORT</b></td>
+                <td>Motion + camera-shake fix + appearance Re-ID</td>
+                <td>Fast</td>
+                <td>✅ Yes</td>
+            </tr>
+            <tr>
+                <td>DeepSORT</td>
+                <td>Motion + appearance (older classic)</td>
+                <td>Slower</td>
+                <td>❌ No (extra lib)</td>
+            </tr>
+            <tr>
+                <td>OC-SORT / StrongSORT</td>
+                <td>Improved versions, heavier setup</td>
+                <td>Varies</td>
+                <td>❌ No</td>
+            </tr>
+        </table>
+        <div class="warning">Our choice: BoT-SORT (main) and ByteTrack (fast fallback).</div>
+        <div class="guide">Why BoT-SORT for us:</div>
+        <div class="guide">
+            - It is BoT-SORT = ByteTrack PLUS two extra things: <span class="red">camera-shake fix</span> (great for CCTV / traffic cams that shake or pan) and <span class="red">appearance Re-ID</span> (holds the right ID when two vehicles cross). <br>
+            - Both BoT-SORT and ByteTrack are ONE line in YOLO, same library we already use. Zero new install. <br>
+            - Use ByteTrack when the pc is weak or we need max FPS (it skips the appearance part so it is lighter). <br>
+        </div>
+    </div>
+
+    <div class="you">Ok show me the code. How to turn on tracking?</div>
+    <div class="chat">
+        <div class="guide">Big point - we do NOT write the tracker ourselves. YOLO has it inside. We only change <span class="red">model(frame)</span> to <span class="red">model.track(frame, ...)</span>. Thats the whole switch.</div>
+        <div class="bash">
+            <pre class="bash">
+import cv2 as cv
+from ultralytics import YOLO
+
+model = YOLO("yolo11l.pt")
+
+frame = cv.imread("cars.jpg")
+
+<span class="comment"># .track() instead of normal call. it gives boxes + an ID for each</span>
+<span class="red">results = model.track(frame, persist=True, tracker="botsort.yaml")</span>
+</pre>
+        </div>
+        <table class="data-rep">
+            <tr>
+                <th>Part</th>
+                <th>Meaning</th>
+            </tr>
+            <tr>
+                <td><b>model.track(...)</b></td>
+                <td>run detection + tracking together</td>
+            </tr>
+            <tr>
+                <td><b>persist=True</b></td>
+                <td>remember IDs from the last frame (very important for video, else IDs reset each frame)</td>
+            </tr>
+            <tr>
+                <td><b>tracker="botsort.yaml"</b></td>
+                <td>use BoT-SORT. for the fast one put "bytetrack.yaml"</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="you">And where is the ID? How to read it?</div>
+    <div class="chat">
+        <div class="guide">Same box as before (box.xyxy, box.cls, box.conf) but now it also has <span class="red">box.id</span> - the fixed track ID. We read it and draw it on the frame.</div>
+        <div class="bash">
+            <pre class="bash">
+for r in results:
+    for box in r.boxes:
+        <span class="comment"># sometimes id is empty on first sight, so check</span>
+        if box.id is None:
+            continue
+
+        track_id = int(box.id[0])              <span class="comment"># the fixed ID, like 7</span>
+        x1, y1, x2, y2 = map(int, box.xyxy[0]) <span class="comment"># box points</span>
+        cls = int(box.cls[0])
+        name = model.names[cls]
+
+        <span class="comment"># draw box + show name and ID</span>
+        cv.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv.putText(frame, f"{name} ID:{track_id}", (x1, y1 - 10),
+                   cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+</pre>
+        </div>
+        <div class="guide">Thats it. Now the same car shows "car ID:7" and it keeps ID 7 as long as it stays on screen. Thats tracking working.</div>
+        <div class="note">Note: box.id can be None for a box YOLO just saw but tracker has not confirmed yet. Always check "if box.id is None: continue" or code will crash.</div>
+    </div>
+
+    <div class="you">Now full webcam version like real project?</div>
+    <div class="chat">
+        <div class="guide">This is our YOLO webcam loop, just model() changed to model.track(). This is basically our single-camera project skeleton.</div>
+        <div class="bash">
+            <pre class="bash">
+import cv2 as cv
+from ultralytics import YOLO
+
+model = YOLO("yolo11l.pt")
+cap = cv.VideoCapture(0) <span class="comment"># webcam. put "traffic.mp4" for a video</span>
+
+vehicles = [2, 3, 5, 7] <span class="comment"># car, motorcycle, bus, truck</span>
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    <span class="red">results = model.track(frame, persist=True, tracker="botsort.yaml", stream=True)</span>
+
+    for r in results:
+        for box in r.boxes:
+            if box.id is None:
+                continue
+            cls = int(box.cls[0])
+            if cls not in vehicles: <span class="comment"># only vehicles</span>
+                continue
+
+            track_id = int(box.id[0])
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            name = model.names[cls]
+            cv.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv.putText(frame, f"{name} ID:{track_id}", (x1, y1 - 10),
+                       cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+    cv.imshow("YOLO + BoT-SORT Tracking", frame)
+    if cv.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv.destroyAllWindows()
+</pre>
+        </div>
+        <div class="guide">Run this on a traffic video. You will see each vehicle keep its own ID number while moving. That fixed ID is what lets us count vehicles and later read each plate only once.</div>
+    </div>
+
+    <div class="warning">There is nothing more we need about tracking right now. Important facts to remember are following</div>
+    <div class="guide">
+        - YOLO has no memory. Tracker's only job is to give each object a fixed ID that stays same across frames. <br>
+        - Tracker matches old boxes to new boxes using Motion (where it should move - Kalman) and Appearance (what it looks like - Re-ID). <br>
+        - We do NOT build the tracker. YOLO has it inside. Just use model.track() instead of model(). <br>
+        - persist=True is a MUST for video, it carries IDs from last frame. Without it IDs reset every frame. <br>
+        - tracker="botsort.yaml" for BoT-SORT (our main), "bytetrack.yaml" for the faster ByteTrack. <br>
+        - The ID is box.id. Always check "if box.id is None: continue" before using it. <br>
+        - BoT-SORT = ByteTrack + camera-shake fix + appearance, so it holds IDs better when vehicles cross. Use ByteTrack if pc is slow. <br>
+        - This is SINGLE camera tracking. IDs are stable within one camera feed. <br>
+    </div>
+
+    <div class="warning">Once you can run the webcam version and see vehicles keeping their IDs, tell me. Next guide -> OCR to read the number plate from each tracked vehicle.</div>
+
+</body>
+</html>

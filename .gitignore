@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+
+# Model weights — download, don't commit
+*.pt
+*.onnx
+*.pth
+
+# Test footage — too big for git, share over Drive
+anpr/data/videos/*
+!anpr/data/videos/.gitkeep
+
+# Run output — regenerate with one command
+anpr/out/frames/*
+anpr/out/crops/*
+anpr/out/map.png
+anpr/out/*.db
+!anpr/out/frames/.gitkeep
+!anpr/out/crops/.gitkeep
+!anpr/out/crops/fail/
+!anpr/out/crops/fail/.gitkeep
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

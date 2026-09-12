@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YOLO11 Guide</title>
+    <style>
+        *{
+            padding: 0;
+            margin: 0;
+        }
+        .data-rep{
+            background-color: white;
+            border-collapse: collapse;
+        }
+        .data-rep tr th,td{
+            border: 1px solid rgb(26, 26, 26);
+            padding: 5px;
+        }
+        body {
+        font-family: Arial;
+        line-height: 1.6;
+        padding: 20px;
+        }
+        .comment{
+            color: grey;
+        }
+        .bash{
+            color: white;
+            background-color: black;
+            border: 1px solid grey;
+            padding: 10px;
+        }
+        .chat {
+        margin-bottom: 15px;
+        padding: 0 20px;
+        }
+        .you {
+        color: blue; font-weight: bold;
+        }
+        .guide {
+        color: green;
+        }
+        .red{
+            color: rgb(94, 255, 0);
+        }
+        .warning{
+            color: rgb(255, 0, 0); font-weight: bold;
+            font-size: 25px;
+        }
+        pre {
+        padding: 10px;
+        border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="warning">YOLO: YOLO will give us the real box points. After this comes Tracking then OCR. This only covers Object detection.</div>
+
+    <div class="you">What is YOLO in simple words?</div>
+    <div class="chat">
+        <div class="guide">YOLO means You Only Look Once. It looks at one frame one time and tells us what objects are in it and where they are. Thats it.</div>
+        <div class="guide">OpenCV gives us the frame, YOLO looks at the frame and says "there is a car here, a person there". It gives us box points and object name. (We will cover exact YOLO Mechanism in future.)</div>
+        <div class="guide">We are using <span class="red">YOLO11</span> here, latest and stable version from ultralytics. Same team as before just newer and better.</div>
+    </div>
+
+    <div class="you">Install YOLO for our project?</div>
+    <div class="chat">
+        <div class="guide">Here is the minimal setup you need:</div>
+        <div class="bash">
+            <p>pip install opencv-python <span class="comment"># if already installed dont run</span></p>
+            <p>pip install ultralytics <span class="comment"># this brings YOLO to us</span></p>
+        </div>
+        <div class="guide">ultralytics is the company that made YOLO. Installing it gives us YOLO11 ready to use.</div>
+    </div>
+
+    <div class="you">What is basic commands and what they do?</div>
+    <div class="chat">
+        <div class="bash">
+            <p>from ultralytics import YOLO <span class="comment"># to bring YOLO in our code</span></p>
+            <p>model = YOLO("yolo11l.pt") <span class="comment"># load pre-trained model (trained on COCO). It alrady has trained model on thousands of images.</span></p>
+        </div>
+        <div class="guide">That yolo11l.pt file downloads automatic first time. 11 is version, l is size (large). Different letter means different size and speed.</div>
+        <table class="data-rep">
+            <tr>
+                <th>Model</th>
+                <th>Name / size</th>
+                <th>Speed</th>
+                <th>Accuracy</th>
+                <th>Use case</th>
+            </tr>
+            <tr>
+                <td><b>yolo11n</b></td>
+                <td>Nano</td>
+                <td>⚡ Fastest</td>
+                <td>❌ Lowest</td>
+                <td>Edge devices, CPU, real-time</td>
+            </tr>
+            <tr>
+                <td><b>yolo11s</b></td>
+                <td>Small</td>
+                <td>Fast</td>
+                <td>Good</td>
+                <td>Laptops, entry GPUs</td>
+            </tr>
+            <tr>
+                <td><b>yolo11m</b></td>
+                <td>Medium</td>
+                <td>Balanced</td>
+                <td>Better</td>
+                <td>Most real projects</td>
+            </tr>
+            <tr>
+                <td><b>yolo11l</b></td>
+                <td>Large</td>
+                <td>Slower</td>
+                <td>High</td>
+                <td>Powerful GPUs</td>
+            </tr>
+            <tr>
+                <td><b>yolo11x</b></td>
+                <td>Very large</td>
+                <td>Slowest</td>
+                <td>Best</td>
+                <td>Max accuracy</td>
+            </tr>
+        </table>
+        <div class="guide">For learning you can use yolo11n (fast, works on any laptop). For accuracy we use yolo11l. Start with n if your pc feels slow on large.</div>
+    </div>
+
+    <div class="you">What is this COCO thing everyone says?</div>
+    <div class="chat">
+        <div class="guide">COCO is a big ready dataset. The model is already trained on it, so it already knows 80 common objects. We dont train anything, we just use it.</div>
+        <div class="guide">Each object has a class id number. YOLO gives us this number, we check which object it is. Some useful ones for us:</div>
+        <table class="data-rep">
+            <tr>
+                <th>Class ID</th>
+                <th>Object</th>
+            </tr>
+            <tr>
+                <td><b>0</b></td>
+                <td>person</td>
+            </tr>
+            <tr>
+                <td><b>2</b></td>
+                <td>car</td>
+            </tr>
+            <tr>
+                <td><b>3</b></td>
+                <td>motorcycle</td>
+            </tr>
+            <tr>
+                <td><b>5</b></td>
+                <td>bus</td>
+            </tr>
+            <tr>
+                <td><b>7</b></td>
+                <td>truck</td>
+            </tr>
+            <tr>
+                <td><b>47</b></td>
+                <td>apple</td>
+            </tr>
+        </table>
+        <div class="guide">So for our vehicle project we mostly care about 2,3,5,7 (car, motorcycle, bus, truck). apple 47 is just for testing fun. We dont have to remember all 80, model already knows them.</div>
+    </div>
+
+    <div class="you">Now show me how to detect objects in a photo?</div>
+    <div class="chat">
+        <div class="guide">Simplest test. Load model, give a image, YOLO returns results, we read the boxes. Here green color is our drawing.</div>
+        <div class="bash">
+            <pre class="bash">
+import cv2 as cv
+<span class="red">from ultralytics import YOLO</span>
+
+<span class="red">model = YOLO("yolo11l.pt")</span> <span class="comment"># load pre-trained model</span>
+
+frame = cv.imread("cars.jpg") <span class="comment"># our input photo</span>
+
+<span class="red">results = model(frame)</span> <span class="comment"># YOLO looks at the frame, returns results</span>
+
+for r in results: <span class="comment"># results is a list, we go through it</span>
+    for box in r.boxes: <span class="comment"># r.boxes = all objects found in the frame</span>
+        x1, y1, x2, y2 = map(int, box.xyxy[0]) <span class="comment"># box corner points, made integer</span>
+        cls = int(box.cls[0]) <span class="comment"># class id number (0=person, 2=car ...)</span>
+        conf = float(box.conf[0]) <span class="comment"># confidence, how sure model is (0 to 1)</span>
+        name = model.names[cls] <span class="comment"># turn id number into name text like "car"</span>
+
+        <span class="comment"># draw box and write name on frame (this is OpenCV work)</span>
+        cv.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv.putText(frame, f"{name} {conf:.2f}", (x1, y1 - 10), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+cv.imshow("YOLO Detection", frame)
+cv.waitKey(0)
+cv.destroyAllWindows()
+</pre>
+        </div>
+        <div class="warning">This is the MAIN thing to learn. Box points + class name + draw. Everything else in project is built on top of this.</div>
+    </div>
+
+    <div class="you">Explain that box.xyxy, box.cls, box.conf clearly?</div>
+    <div class="chat">
+        <div class="guide">For every object YOLO found, it gives us these 3 things. Learn each one.</div>
+        <table class="data-rep">
+            <tr>
+                <th>Code</th>
+                <th>What it gives</th>
+                <th>Example</th>
+            </tr>
+            <tr>
+                <td><b>box.xyxy[0]</b></td>
+                <td>4 corner points x1,y1,x2,y2 (where the box is)</td>
+                <td>(100, 80, 300, 250)</td>
+            </tr>
+            <tr>
+                <td><b>box.cls[0]</b></td>
+                <td>class id number (which object)</td>
+                <td>2 (car)</td>
+            </tr>
+            <tr>
+                <td><b>box.conf[0]</b></td>
+                <td>confidence 0 to 1 (how sure model is)</td>
+                <td>0.91</td>
+            </tr>
+            <tr>
+                <td><b>model.names[cls]</b></td>
+                <td>turns id number into name text</td>
+                <td>"car"</td>
+            </tr>
+        </table>
+        <div class="guide">We do map(int, ...) on the points because OpenCV needs whole numbers not decimals to draw. And conf:.2f just means show 2 digits after point like 0.91.</div>
+    </div>
+
+    <div class="you">I only want vehicles not everything, how to filter?</div>
+    <div class="chat">
+        <div class="guide">Easy. Just check the class id before drawing. If it is a vehicle then draw, else skip.</div>
+        <div class="bash">
+            <pre class="bash">
+vehicles = [2, 3, 5, 7] <span class="comment"># car, motorcycle, bus, truck</span>
+
+for r in results:
+    for box in r.boxes:
+        cls = int(box.cls[0])
+        if cls in vehicles: <span class="comment"># only if it is a vehicle</span>
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            conf = float(box.conf[0])
+            name = model.names[cls]
+            cv.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv.putText(frame, f"{name} {conf:.2f}", (x1, y1 - 10), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+</pre>
+        </div>
+        <div class="guide">Same for person only use [0], for apple use [47]. This filter is how we control what to detect.</div>
+    </div>
+
+    <div class="you">Now full webcam version like real project?</div>
+    <div class="chat">
+        <div class="guide">This is OpenCV camera loop from step 1 + YOLO inside it. Every frame goes to YOLO. Press q to quit. This is basically our project skeleton (without tracker).</div>
+        <div class="bash">
+            <pre class="bash">
+import cv2 as cv
+<span class="red">from ultralytics import YOLO</span>
+
+<span class="red">model = YOLO("yolo11l.pt")</span>
+cap = cv.VideoCapture(0) <span class="comment"># webcam. put "video.mp4" for a file</span>
+
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    <span class="red">results = model(frame, stream=True)</span> <span class="comment"># stream=True is better for video/webcam</span>
+
+    for r in results:
+        for box in r.boxes:
+            cls = int(box.cls[0])
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            conf = float(box.conf[0])
+            name = model.names[cls]
+            cv.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv.putText(frame, f"{name} {conf:.2f}", (x1, y1 - 10), cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+    cv.imshow("YOLO11 Live", frame)
+    if cv.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv.destroyAllWindows()
+</pre>
+        </div>
+        <div class="guide">Notice for webcam/video we add <span class="red">stream=True</span>. It makes YOLO handle frames one by one smoothly. For single photo we dont need it.</div>
+    </div>
+
+    <div class="warning">Important facts to remember are following</div>
+    <div class="guide">
+        - YOLO does NOT return a picture. It returns predictions (box points, class id, confidence). We draw them ourselves with OpenCV. <br>
+        - YOLO11 is pre-trained on COCO so it already knows 80 objects. We are NOT training anything, just using it. <br>
+        - We only need box.xyxy (points), box.cls (which object), box.conf (how sure). Thats the whole answer. <br>
+        - model.names[cls] turns the number into a name text like "car" or "person". <br>
+        - To detect only what we want, filter by class id (2,3,5,7 for vehicles). <br>
+        - Confidence tells how sure model is. Low confidence = more boxes but more wrong ones. <br>
+        - YOLO runs on CPU by default, becomes much faster on GPU (CUDA). For learning CPU is fine, use yolo11n if slow. <br>
+        - Right now every frame YOLO sees is fresh, it does NOT remember same car across frames. That memory part is TRACKING, our next guide. <br>
+    </div>
+
+    <div class="warning">next-> Tracking (ByteTrack) so each vehicle gets a fixed ID.</div>
+
+</body>
+</html>

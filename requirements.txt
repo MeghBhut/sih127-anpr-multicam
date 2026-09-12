@@ -1,0 +1,16 @@
+# Prototype: pretrained models only, no fine-tuning.
+# Install:  pip install -r requirements.txt
+
+numpy>=1.26
+opencv-python>=4.9
+
+# person 2 — detection + tracking (YOLO + BoT-SORT)
+ultralytics>=8.3
+
+# person 3 — plate detection + OCR
+# GPU:  pip install "fast-alpr[onnx-gpu]"
+fast-alpr>=0.1
+
+# person 5 — map and deck images
+folium>=0.16
+matplotlib>=3.8

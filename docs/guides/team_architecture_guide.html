@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Team Architecture Guide</title>
+    <style>
+        *{
+            padding: 0;
+            margin: 0;
+        }
+        .data-rep{
+            background-color: white;
+            border-collapse: collapse;
+        }
+        .data-rep tr th,td{
+            border: 1px solid rgb(26, 26, 26);
+            padding: 5px;
+        }
+        body {
+        font-family: Arial;
+        line-height: 1.6;
+        padding: 20px;
+        }
+        .comment{
+            color: grey;
+        }
+        .bash{
+            color: white;
+            background-color: black;
+            border: 1px solid grey;
+            padding: 10px;
+        }
+        .chat {
+        margin-bottom: 15px;
+        padding: 0 20px;
+        }
+        .you {
+        color: blue; font-weight: bold;
+        }
+        .guide {
+        color: green;
+        }
+        .red{
+            color: rgb(94, 255, 0);
+        }
+        .warning{
+            color: rgb(255, 0, 0); font-weight: bold;
+            font-size: 25px;
+        }
+        .note{
+            color: rgb(200, 120, 0); font-weight: bold;
+        }
+        pre {
+        padding: 10px;
+        border-radius: 5px;
+        }
+        .person{
+            color: rgb(120, 0, 200); font-weight: bold; font-size: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="warning">TEAM PLAN - how all 6 of us build ONE project together on GitHub without breaking each other. Read this fully before coding. This teaches us OOP + Git + teamwork at once.</div>
+
+    <div class="you">Should we write the whole project in one big file?</div>
+    <div class="chat">
+        <div class="guide">NO. If all 6 of us edit one file, every time we push to GitHub it becomes a merge conflict fight (Git cant join 6 people editing the same lines). That kills teamwork.</div>
+        <div class="guide">Instead we split into many files - <span class="red">one class per file, one file owned by one person.</span> main.py just imports them and calls them. This is called modular OOP design. Because each person edits a DIFFERENT file, Git merges everyone's work with almost zero conflict. Nobody can break another's part.</div>
+        <div class="warning">Rule: You only edit YOUR file. You never touch someone else's file. If you need a change in their file, you ASK them.</div>
+    </div>
+
+    <div class="you">How do the parts connect if they are separate files?</div>
+    <div class="chat">
+        <div class="guide">By a shared CONTRACT. Before anyone codes, we all agree on the exact "packet" that travels between modules. Everyone builds to this same shape, so the parts snap together like Lego. This is the MOST important step.</div>
+        <div class="bash">
+            <pre class="bash">
+<span class="comment"># THE CONTRACT - one detected vehicle is always this dictionary</span>
+detection = {
+    "track_id": 7,               <span class="comment"># fixed ID from tracker</span>
+    "xyxy": (x1, y1, x2, y2),    <span class="comment"># box corners</span>
+    "name": "car",              <span class="comment"># class name</span>
+    "conf": 0.91,                <span class="comment"># confidence</span>
+    "plate": None,               <span class="comment"># filled later by OCR person</span>
+    "camera_id": 1,              <span class="comment"># which camera saw it</span>
+}
+</pre>
+        </div>
+        <div class="guide">Every module either MAKES this packet, or READS this packet. As long as we all respect this shape, my code and your code fit even though we never saw each other's file.</div>
+    </div>
+
+    <div class="you">Show me the full picture - how data flows through the 6 parts.</div>
+    <div class="chat">
+        <div class="bash">
+            <pre class="bash">
+[1 Camera] --frame--> [2 Detect+Track] --detections--> [3 Plate OCR] --adds plate-->
+                                                                |
+                                                                v
+                                        [4 Database] stores each ID + plate + position
+                                                                |
+                                                                v
+                                        [5 Map + Draw] boxes on frame + points on map
+
+              [6 main.py + config.py] wires all of the above and runs the loop
+</pre>
+        </div>
+        <div class="guide">So it is a pipeline. Frame goes in one end, comes out as drawn boxes + map points on the other end. Each person owns one station of this pipeline.</div>
+    </div>
+
+    <div class="you">Give me the 6 parts clearly so I can assign them.</div>
+    <div class="chat">
+        <table class="data-rep">
+            <tr>
+                <th>#</th>
+                <th>Person owns</th>
+                <th>File</th>
+                <th>Class</th>
+                <th>Job in one line</th>
+            </tr>
+            <tr>
+                <td>1</td>
+                <td><b>Camera Input</b></td>
+                <td>camera.py</td>
+                <td>CameraManager</td>
+                <td>open webcam/video/CCTV, give frames</td>
+            </tr>
+            <tr>
+                <td>2</td>
+                <td><b>Detect + Track</b></td>
+                <td>detector.py</td>
+                <td>VehicleDetector</td>
+                <td>YOLO track -> boxes + IDs (the contract packet)</td>
+            </tr>
+            <tr>
+                <td>3</td>
+                <td><b>Plate OCR</b></td>
+                <td>plate_reader.py</td>
+                <td>PlateReader</td>
+                <td>crop plate area, read number text</td>
+            </tr>
+            <tr>
+                <td>4</td>
+                <td><b>Track Database</b></td>
+                <td>database.py</td>
+                <td>TrackDatabase</td>
+                <td>store each ID's plate + path + camera</td>
+            </tr>
+            <tr>
+                <td>5</td>
+                <td><b>Map + Draw</b></td>
+                <td>visualizer.py</td>
+                <td>Visualizer</td>
+                <td>draw boxes on frame + points on holograph map</td>
+            </tr>
+            <tr>
+                <td>6</td>
+                <td><b>Main + Config</b></td>
+                <td>main.py + config.py</td>
+                <td>(wiring)</td>
+                <td>connect all parts, run loop, hold settings</td>
+            </tr>
+        </table>
+        <div class="note">Note: Person 2 does detection AND tracking together, because YOLO's model.track() does both in one call. So they are one module, one owner.</div>
+    </div>
+
+    <div class="warning">Now each person's exact task with a starter stub. Fill only the inside, keep the class name and method names SAME (thats the contract).</div>
+
+    <div class="person">PERSON 1 - Camera Input (camera.py)</div>
+    <div class="chat">
+        <div class="guide">Your job: open any source (webcam number, video file, or CCTV rtsp link) and hand out frames. Nothing else.</div>
+        <div class="bash">
+            <pre class="bash">
+import cv2 as cv
+
+class CameraManager:
+    def __init__(self, source, camera_id):
+        self.cap = cv.VideoCapture(source)   <span class="comment"># 0 / "video.mp4" / "rtsp://..."</span>
+        self.camera_id = camera_id
+
+    def read(self):
+        return self.cap.read()               <span class="comment"># returns (ret, frame)</span>
+
+    def release(self):
+        self.cap.release()
+</pre>
+        </div>
+        <div class="guide">Give out: (ret, frame). Thats your only output. Learn from the OpenCV guide.</div>
+    </div>
+
+    <div class="person">PERSON 2 - Detect + Track (detector.py)</div>
+    <div class="chat">
+        <div class="guide">Your job: take a frame, run YOLO tracking, return a LIST of contract packets (one per vehicle). This is the heart module.</div>
+        <div class="bash">
+            <pre class="bash">
+from ultralytics import YOLO
+
+class VehicleDetector:
+    def __init__(self, model_path, vehicle_classes):
+        self.model = YOLO(model_path)
+        self.vehicle_classes = vehicle_classes    <span class="comment"># [2,3,5,7]</span>
+
+    def detect_and_track(self, frame, camera_id):
+        results = self.model.track(frame, persist=True,
+                                   tracker="botsort.yaml", verbose=False)
+        detections = []
+        for r in results:
+            for box in r.boxes:
+                if box.id is None:
+                    continue
+                cls = int(box.cls[0])
+                if cls not in self.vehicle_classes:
+                    continue
+                detections.append({
+                    "track_id": int(box.id[0]),
+                    "xyxy": tuple(map(int, box.xyxy[0])),
+                    "name": self.model.names[cls],
+                    "conf": float(box.conf[0]),
+                    "plate": None,
+                    "camera_id": camera_id,
+                })
+        return detections      <span class="comment"># list of contract packets</span>
+</pre>
+        </div>
+        <div class="note">Important: for MULTI camera, make ONE VehicleDetector object PER camera. If all cameras share one detector the track IDs get mixed. One camera = one detector object.</div>
+    </div>
+
+    <div class="person">PERSON 3 - Plate OCR (plate_reader.py)</div>
+    <div class="chat">
+        <div class="guide">Your job: given a frame and a box, cut that box out and read the number plate text. This is our LAST guide topic, so for now return a placeholder and finish it after the OCR guide.</div>
+        <div class="bash">
+            <pre class="bash">
+class PlateReader:
+    def __init__(self):
+        <span class="comment"># load OCR model here (we learn this in OCR guide)</span>
+        pass
+
+    def read(self, frame, xyxy):
+        x1, y1, x2, y2 = xyxy
+        crop = frame[y1:y2, x1:x2]   <span class="comment"># cut only the vehicle area</span>
+        <span class="comment"># TODO: run OCR on crop, return the plate string</span>
+        return None                  <span class="comment"># placeholder for now</span>
+</pre>
+        </div>
+        <div class="guide">Take in: frame + box. Give out: plate text (or None). You can start by learning image crop from the OpenCV guide.</div>
+    </div>
+
+    <div class="person">PERSON 4 - Track Database (database.py)</div>
+    <div class="chat">
+        <div class="guide">Your job: remember every vehicle. For each (camera_id, track_id) keep its plate and its list of positions. This memory is what makes counting and pathing possible.</div>
+        <div class="bash">
+            <pre class="bash">
+class TrackDatabase:
+    def __init__(self):
+        self.tracks = {}    <span class="comment"># key = (camera_id, track_id)</span>
+
+    def update(self, detections):
+        for det in detections:
+            key = (det["camera_id"], det["track_id"])
+            if key not in self.tracks:
+                self.tracks[key] = {"plate": None, "positions": []}
+            <span class="comment"># center point of the box</span>
+            x1, y1, x2, y2 = det["xyxy"]
+            cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+            self.tracks[key]["positions"].append((cx, cy))
+            if det["plate"]:
+                self.tracks[key]["plate"] = det["plate"]
+
+    def all_tracks(self):
+        return self.tracks
+</pre>
+        </div>
+        <div class="guide">Take in: list of detections. Give out: the full memory of all tracks. Person 5 will use this to draw the map.</div>
+    </div>
+
+    <div class="person">PERSON 5 - Map + Draw (visualizer.py)</div>
+    <div class="chat">
+        <div class="guide">Your job: two drawings. (1) draw boxes + ID on the camera frame. (2) plot each vehicle as a point on our holograph map.</div>
+        <div class="bash">
+            <pre class="bash">
+import cv2 as cv
+
+class Visualizer:
+    def draw_boxes(self, frame, detections):
+        for det in detections:
+            x1, y1, x2, y2 = det["xyxy"]
+            label = f'{det["name"]} ID:{det["track_id"]}'
+            if det["plate"]:
+                label += f' {det["plate"]}'
+            cv.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv.putText(frame, label, (x1, y1 - 10),
+                       cv.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        return frame
+
+    def update_map(self, tracks):
+        <span class="comment"># make a blank map and put a dot for each vehicle's latest position</span>
+        <span class="comment"># TODO: connect this to our holograph map</span>
+        pass
+</pre>
+        </div>
+        <div class="guide">Take in: frame + detections (for boxes), and tracks (for map). Give out: the drawn frame + the map view. Learn drawing from the OpenCV guide.</div>
+    </div>
+
+    <div class="person">PERSON 6 - Main + Config (main.py + config.py)</div>
+    <div class="chat">
+        <div class="guide">Your job: you are the glue. You import all 5 modules, create their objects, and run the main loop that passes data from one to the next. You also hold all settings in config.py so nobody hardcodes numbers.</div>
+        <div class="bash">
+            <pre class="bash">
+<span class="comment"># ---------- config.py (settings everyone reads) ----------</span>
+CAMERA_SOURCES = [0]           <span class="comment"># or ["cam1.mp4", "cam2.mp4"]</span>
+MODEL_PATH = "yolo11l.pt"
+VEHICLE_CLASSES = [2, 3, 5, 7] <span class="comment"># car, motorcycle, bus, truck</span>
+</pre>
+        </div>
+        <div class="bash">
+            <pre class="bash">
+<span class="comment"># ---------- main.py (wires all parts) ----------</span>
+import cv2 as cv
+import config
+from camera import CameraManager
+from detector import VehicleDetector
+from plate_reader import PlateReader
+from database import TrackDatabase
+from visualizer import Visualizer
+
+<span class="comment"># build objects (one detector per camera)</span>
+cameras   = [CameraManager(src, i) for i, src in enumerate(config.CAMERA_SOURCES)]
+detectors = [VehicleDetector(config.MODEL_PATH, config.VEHICLE_CLASSES) for _ in cameras]
+plate     = PlateReader()
+db        = TrackDatabase()
+viz       = Visualizer()
+
+while True:
+    for cam, det in zip(cameras, detectors):
+        ret, frame = cam.read()
+        if not ret:
+            continue
+
+        detections = det.detect_and_track(frame, cam.camera_id)   <span class="comment"># Person 2</span>
+
+        for d in detections:
+            d["plate"] = plate.read(frame, d["xyxy"])              <span class="comment"># Person 3</span>
+
+        db.update(detections)                                     <span class="comment"># Person 4</span>
+        frame = viz.draw_boxes(frame, detections)                <span class="comment"># Person 5</span>
+        viz.update_map(db.all_tracks())                          <span class="comment"># Person 5</span>
+
+        cv.imshow(f"Camera {cam.camera_id}", frame)
+
+    if cv.waitKey(1) & 0xFF == ord('q'):
+        break
+
+for cam in cameras:
+    cam.release()
+cv.destroyAllWindows()
+</pre>
+        </div>
+        <div class="guide">See how clean main.py is? It never knows HOW each part works inside, it only calls the agreed method names. Thats the power of the contract.</div>
+    </div>
+
+    <div class="warning">Now the GitHub team workflow - how we all push without breaking each other</div>
+
+    <div class="you">How do we set up the folder and GitHub?</div>
+    <div class="chat">
+        <div class="guide">Final folder looks like this:</div>
+        <div class="bash">
+            <pre class="bash">
+vehicle-tracker/
+    camera.py         <span class="comment"># Person 1</span>
+    detector.py       <span class="comment"># Person 2</span>
+    plate_reader.py   <span class="comment"># Person 3</span>
+    database.py       <span class="comment"># Person 4</span>
+    visualizer.py     <span class="comment"># Person 5</span>
+    main.py           <span class="comment"># Person 6</span>
+    config.py         <span class="comment"># Person 6</span>
+    requirements.txt  <span class="comment"># list of pip packages</span>
+    .gitignore        <span class="comment"># ignore junk files</span>
+    CODEOWNERS        <span class="comment"># who owns which file</span>
+</pre>
+        </div>
+        <div class="guide">One person (Person 6) makes the GitHub repo and pushes this empty skeleton first (all files with just the class stubs above). Then everyone clones it.</div>
+    </div>
+
+    <div class="you">What is the daily git steps for each person?</div>
+    <div class="chat">
+        <div class="guide">Everyone follows the SAME 6 steps. Never code directly on main branch.</div>
+        <div class="bash">
+            <pre class="bash">
+git clone &lt;repo-link&gt;             <span class="comment"># first time only</span>
+git checkout -b feature/camera    <span class="comment"># make YOUR own branch (own name)</span>
+
+<span class="comment"># ... edit ONLY your file ...</span>
+
+git add camera.py                 <span class="comment"># add only your file</span>
+git commit -m "camera: added CameraManager read()"
+git push origin feature/camera    <span class="comment"># push your branch</span>
+
+<span class="comment"># then on GitHub website: open a Pull Request -> team reviews -> merge to main</span>
+</pre>
+        </div>
+        <div class="guide">Before starting work each day, pull the latest main so you have everyone's merged work:</div>
+        <div class="bash">
+            <p>git checkout main</p>
+            <p>git pull origin main</p>
+            <p>git checkout -b feature/camera-day2 <span class="comment"># new small branch for new work</span></p>
+        </div>
+    </div>
+
+    <div class="you">How do we FORCE that no one can edit another's file?</div>
+    <div class="chat">
+        <div class="guide">Two things. First a CODEOWNERS file that maps each file to its owner. Put it in the repo root.</div>
+        <div class="bash">
+            <pre class="bash">
+<span class="comment"># CODEOWNERS file</span>
+camera.py         @teammate1
+detector.py       @teammate2
+plate_reader.py   @teammate3
+database.py       @teammate4
+visualizer.py     @teammate5
+main.py           @teammate6
+config.py         @teammate6
+</pre>
+        </div>
+        <div class="guide">Second, on GitHub go to Settings -> Branches -> add a rule on main -> tick <span class="red">"Require review from Code Owners"</span> and <span class="red">"Require a pull request before merging"</span>. Now if anyone's PR touches a file they dont own, GitHub blocks the merge until the real owner approves. Thats the enforcement you wanted.</div>
+        <div class="note">Note: CODEOWNERS needs real GitHub usernames (with @). branch protection rules are set by the repo owner (Person 6) once.</div>
+    </div>
+
+    <div class="warning">Team rules to lock in - read twice</div>
+    <div class="guide">
+        - The project is NOT one file. It is one class per file, one owner per file. main.py only wires them. <br>
+        - Agree on the CONTRACT (the detection dictionary) BEFORE coding. It is what makes separate files fit together. <br>
+        - You edit ONLY your file. Need a change in another file? Ask that owner, dont edit it yourself. <br>
+        - Keep the class name and method names EXACTLY as the stub. Change the inside only, never the names (else the pipeline breaks). <br>
+        - Never code on main branch. Always: new branch -> edit your file -> commit -> push -> Pull Request -> review -> merge. <br>
+        - Pull main every day before new work so you have everyone's latest. <br>
+        - CODEOWNERS + branch protection = GitHub itself blocks editing someone else's part. <br>
+        - Person 3 (OCR) fills real code after our OCR guide. Till then their placeholder lets the whole project still run. <br>
+    </div>
+
+    <div class="warning">This is our teamwork plan. Everyone reads this first, we agree the contract together, then each person starts their own file. Ask me any doubt before we begin.</div>
+
+</body>
+</html>
