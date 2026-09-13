@@ -137,6 +137,24 @@ def build_sighting(ft: dict, group: list[dict], suffix: str = "") -> dict:
     }
 
 
+def build_map_links(links: list[dict], sightings: list[dict]) -> list[dict]:
+    """Database links join two *sightings*; the map draws lines between
+    *cameras*. Resolve one to the other here, where the database lives, and
+    collapse repeats so one line per camera pair per method reaches the map.
+    """
+    cam_of = {s["id"]: s["cam_id"] for s in sightings}
+    counts: dict[tuple[str, str, str], int] = {}
+    for link in links:
+        a, b = cam_of.get(link["a_id"]), cam_of.get(link["b_id"])
+        if not a or not b or a == b:
+            continue
+        method = link.get("method") or "inferred"
+        key = (a, b) if a <= b else (b, a)
+        counts[(key[0], key[1], method)] = counts.get((key[0], key[1], method), 0) + 1
+    return [{"from": a, "to": b, "type": m, "count": n}
+            for (a, b, m), n in sorted(counts.items())]
+
+
 def save_track(ft: dict, groups: list[list[dict]]) -> list[int]:
     """Write one row per segment of a finished track. Returns the new row ids."""
     if not groups:
@@ -170,7 +188,10 @@ def run(sources: dict[str, str], fresh: bool = True) -> dict:
     # (cam_id, track_id) -> list of read-groups. Track ids restart on every
     # camera, so a bare id would merge C1's track 3 with C2's track 3.
     groups: dict[tuple[str, int], list[list[dict]]] = defaultdict(lambda: [[]])
+    # last vote per track, so a locked or budget-spent track still draws right
+    display: dict[tuple[str, int], tuple] = {}
     switches = 0
+    frames_saved = 0
 
     for cam_id, source in sources.items():
         # Real recording start, so two clips share one clock. None only makes
@@ -190,7 +211,7 @@ def run(sources: dict[str, str], fresh: bool = True) -> dict:
             logger.error("[%s] skipped: %s", cam_id, exc)
             continue
 
-        locked_tracks: set[int] = set()
+        locked_tracks: set[tuple[str, int]] = set()
         try:
             for f in camera.frames():
                 tracks = detector.update(f["frame"], cam_id, f["t"])
@@ -199,32 +220,38 @@ def run(sources: dict[str, str], fresh: bool = True) -> dict:
                     tid = (cam_id, t["track_id"])
                     current = groups[tid][-1]
 
-                    if tid in locked_tracks:
-                        continue                                # budget: stop when locked
-                    if len(current) >= config.MAX_OCR_PER_TRACK:
-                        continue                                # hard cap per segment
-                    if not plate_reader.passes_gate(t["crop"]):
-                        continue
+                    budget_left = (tid not in locked_tracks
+                                   and len(current) < config.MAX_OCR_PER_TRACK)
+                    if budget_left and plate_reader.passes_gate(t["crop"]):
+                        r = plate_reader.read_plate(t["crop"])
+                        if r:
+                            read = {**r, "quality": t["quality"], "t": f["t"]}
+                            if is_id_switch(current, read):
+                                logger.warning(
+                                    "[%s] track %s: ID switch, starting a new segment",
+                                    cam_id, t["track_id"])
+                                switches += 1
+                                groups[tid].append([read])
+                                locked_tracks.discard(tid)
+                            else:
+                                current.append(read)
+                            current = groups[tid][-1]
 
-                    r = plate_reader.read_plate(t["crop"])
-                    if r:
-                        read = {**r, "quality": t["quality"], "t": f["t"]}
-                        if is_id_switch(current, read):
-                            logger.warning(
-                                "[%s] track %s: ID switch, starting a new segment", cam_id, tid)
-                            switches += 1
-                            groups[tid].append([read])
-                            locked_tracks.discard(tid)
-                        else:
-                            current.append(read)
-                        current = groups[tid][-1]
+                        plate, conf, locked = plate_logic.vote(current, config.MIN_CHAR_CONF)
+                        display[tid] = (plate or None, conf, locked)
+                        if locked:
+                            locked_tracks.add(tid)
 
-                    plate, conf, locked = plate_logic.vote(current, config.MIN_CHAR_CONF)
-                    t["plate"], t["plate_conf"], t["locked"] = plate or None, conf, locked
-                    if locked:
-                        locked_tracks.add(tid)
+                    # Set these on EVERY track every frame, not only when OCR
+                    # ran. A locked track skips the block above, and without
+                    # this its box would go back to grey "no plate".
+                    t["plate"], t["plate_conf"], t["locked"] = display.get(
+                        tid, (None, None, False))
 
-                visualizer.draw_frame(f["frame"], tracks)
+                annotated = visualizer.draw_frame(f["frame"], tracks)
+                if config.SAVE_FRAME_EVERY and f["frame_no"] % config.SAVE_FRAME_EVERY == 0:
+                    visualizer.save_frame(annotated, cam_id, f["frame_no"])
+                    frames_saved += 1
 
                 for ft in detector.finished_tracks():
                     save_track(ft, groups.pop((ft["cam_id"], ft["track_id"]), [[]]))
@@ -238,9 +265,10 @@ def run(sources: dict[str, str], fresh: bool = True) -> dict:
 
     links = linker.link_all()
     clones = linker.find_cloned_plates()
-    map_path = visualizer.draw_map(database.get_cameras(), database.get_links())
 
     sightings = database.get_all_sightings()
+    map_links = build_map_links(database.get_links(), sightings)
+    map_path = visualizer.draw_map(database.get_cameras(), map_links)
     by_status: dict[str, int] = defaultdict(int)
     for s in sightings:
         by_status[s.get("plate_status") or "?"] += 1
@@ -249,6 +277,7 @@ def run(sources: dict[str, str], fresh: bool = True) -> dict:
         "sightings": len(sightings),
         "plates": dict(by_status),
         "id_switches": switches,
+        "frames_saved": frames_saved,
         "links": len(links),
         "clones": len(clones),
         "map": map_path,
@@ -259,6 +288,7 @@ def run(sources: dict[str, str], fresh: bool = True) -> dict:
         if by_status.get(status):
             print(f"  {status:<10}: {by_status[status]}")
     print(f"id switches : {switches}")
+    print(f"frames saved: {frames_saved} -> {config.FRAME_DIR}")
     print(f"links       : {summary['links']}")
     print(f"clones      : {summary['clones']}")
     print(f"map         : {map_path}")

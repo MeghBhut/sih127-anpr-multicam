@@ -90,6 +90,10 @@ OCR_GAP_WIDTH_MULTIPLIER = 1.8
 # (ratio > ~3), true dual-row plates are closer to square (ratio ~1-2).
 DUAL_ROW_ASPECT_RATIO_THRESHOLD = 2.0
 
+# How often to write an annotated frame to out/frames/. 1 = every processed
+# frame (thousands of files), 0 = never. These are the deck screenshots.
+SAVE_FRAME_EVERY = 10
+
 # ---------------------------------------------------------------- voting
 MAX_OCR_PER_TRACK = 12   # OCR budget: hard cap of frames per track
 MIN_CHAR_CONF = 0.5      # every position must beat this to lock
