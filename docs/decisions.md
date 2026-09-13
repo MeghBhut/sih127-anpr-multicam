@@ -174,16 +174,108 @@ This is a safety net, not a fix. If it fires often, the tracker needs attention.
 
 ---
 
-## 6. What is not in git
+## 6. Detector.update() takes the frame's timestamp — a frozen signature changed
+
+**Owner affected:** everyone
+
+The contract froze `Detector.update(frame, cam_id)`. That signature has no way to receive
+the frame's time, so the detector stamped every track with `time.time()` — the moment the
+laptop processed the frame, not the moment the vehicle was filmed. Clips are processed one
+after another, so every C1 sighting landed seconds before every C2 sighting regardless of
+the real footage, and the travel-time windows were being compared against processing
+order. **No link could have been correct.**
+
+The signature is now:
+
+```python
+def update(self, frame: np.ndarray, cam_id: str, t: float) -> list[dict]
+```
+
+`t` comes straight from `camera.frames()`. Rule 4 (timestamps are unix seconds) was
+impossible to honour without it.
+
+Two more things had to change for the clock to be real end to end:
+
+- **`Detector.flush(cam_id)`** — a vehicle still on screen when a clip ends never hit the
+  unseen-frames timeout, so it stayed open forever and never became a sighting. `main.py`
+  flushes after each camera.
+- **`config.RECORDING_START`** — `main.py` used to pass `time.time()` as every camera's
+  start time, so even with the detector fixed all three clips looked simultaneous. Person 1
+  fills in the real recording times; until then the run warns and links stay meaningless.
+
+---
+
+## 7. The OCR stack is not the one in the contract, and that is the right call
+
+**Owner affected:** person 3
+
+The contract specified fast-alpr with `cct-s-v2-global-model`, with PaddleOCR only as a
+fallback "if it reads Indian plates badly". Person 3 went to
+[Awiros ANPR OCR](https://huggingface.co/Awiros/anpr-ocr) (PP-OCRv5 / SVTR_HGNet) as the
+primary, keeping fast-alpr's *detector* (open-image-models) for finding the plate.
+
+Checked, and it is a better fit than what the contract named:
+
+| | contract | what we run |
+|---|---|---|
+| trained for | plates worldwide | Indian plates, all state codes |
+| dual-row bike plates | not handled | 96.9% |
+| overall | not stated | 98.4% |
+
+**This retires a known limit.** "Two-line bike plates read poorly" was on the feasibility
+slide; it is no longer true. Painted truck plates and night glare still are.
+
+The cost is a heavier install: PaddleOCR has to be cloned and the weights fetched from
+Hugging Face by hand. Both steps are in the README, and both paths are gitignored.
+
+### Preprocessing must match PaddleOCR's
+
+Plates are padded out to 320px wide before the model sees them. PaddleOCR normalises
+first and pads with `0.0`; our first version padded with black pixels and normalised
+after, putting `-1.0` there. These weights were trained through PaddleOCR's pipeline, and
+almost every plate is narrower than 320px, so almost every read was affected. If anyone
+touches `_preprocess`, diff it against `ppocr/data/imaug/rec_img_aug.py` first.
+
+### A recovered character is a guess
+
+`_ctc_decode_with_gaps` spots suspiciously wide gaps between characters and recovers what
+CTC's collapse step dropped. That is real and useful, but the recovered character was
+entering the vote looking exactly like one the model actually read. It is now capped at
+`config.OCR_RECOVERED_MAX_CONF` (0.45), below `MIN_CHAR_CONF` (0.5), so a guess still
+contributes to the vote but can never be the thing that locks a plate. The per-character
+tags (`kept` / `low_conf` / `recovered` / `unresolved`) are returned in `read_plate`'s
+dict instead of being discarded.
+
+---
+
+## 8. read_plate returns None, it does not raise
+
+**Owner affected:** person 3, person 6
+
+`read_plate` runs once per frame per track. It used to let exceptions escape, so a single
+odd crop — a zero-width plate box was enough to crash `cv2.resize` — ended the run for all
+three videos at once. The contract's promise was always "returns None when there is no
+plate"; failing to read counts as not reading. It now catches, logs, and returns `None`.
+
+The same reasoning applies to imports. `plate_reader` and `detector` both loaded their
+heavy packages at module level, so a missing OCR install stopped `main.py` from importing
+and nobody could run the camera, database or linker either. Both load on first use now and
+raise a message naming the pip command. Every module in the package imports with no
+third-party model packages installed.
+
+---
+
+## 9. What is not in git
 
 **Test footage** (`anpr/data/videos/`) — too big, and it is our own recording. Share over
 Drive; note each clip's real start time in the sheet, because `Camera(start_time=...)` is
 what puts two videos on one clock.
 
-**Model weights** (`*.pt`, `*.onnx`) — ultralytics downloads `yolo26s.pt` into the working
-directory on first run, and `fast-alpr` pulls its own model on first call, so every machine
-gets them from pip. If we ever fine-tune, that checkpoint is shared by hand like the
-footage.
+**Model weights** — ultralytics downloads `yolo26s.pt` itself on first run. The Awiros OCR
+weights (`anpr/model.safetensors`, `anpr/en_dict.txt`) are fetched by hand from Hugging
+Face, and the PaddleOCR checkout (`anpr/PaddleOCR/`) is cloned once — see the README.
+All three are gitignored. If we ever fine-tune, that checkpoint is shared by hand like
+the footage.
 
 **Run output** (`anpr/out/`) — regenerated by one command, so it stays out of git.
 Deck screenshots are the exception: `git add -f` the specific ones person 5 wants to keep.

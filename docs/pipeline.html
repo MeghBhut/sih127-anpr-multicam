@@ -277,6 +277,7 @@
       <li><b>3</b> cameras, one shared clock</li>
       <li><b>2</b> loops: per frame, per finished track</li>
       <li>pretrained models, <b>no fine-tuning</b></li>
+      <li><b>1</b> shared clock</li>
     </ul>
   </header>
 
@@ -286,7 +287,8 @@
       A frame enters at the far left and leaves as a row in the sightings table. Nothing is
       identified in one pass: the top band runs many times per vehicle, collecting noisy plate
       reads, and only hands the bottom band a result once voting locks it or the OCR budget
-      runs out.
+      runs out. Every frame carries the time it was <em>filmed</em>, not the time it was
+      processed &mdash; that shared clock is the only thing that makes two cameras comparable.
     </p>
 
     <figure>
@@ -323,16 +325,16 @@
           <rect class="svg-box" x="337" y="112" width="220" height="104"></rect>
           <text class="svg-mod" x="353" y="140">detector.py</text>
           <text class="svg-own" x="541" y="140" text-anchor="end">P2</text>
-          <text class="svg-sub" x="353" y="166">YOLO + BoT-SORT</text>
+          <text class="svg-sub" x="353" y="166">YOLO26 + BoT-SORT</text>
           <text class="svg-sub" x="353" y="186">colour, direction, sharpness</text>
           <text class="svg-sub" x="353" y="206">keeps the best crop per track</text>
 
           <rect class="svg-box" x="642" y="112" width="220" height="104"></rect>
           <text class="svg-mod" x="658" y="140">plate_reader.py</text>
           <text class="svg-own" x="846" y="140" text-anchor="end">P3</text>
-          <text class="svg-sub" x="658" y="166">passes_gate, then fast-alpr</text>
-          <text class="svg-sub" x="658" y="186">per-character probabilities</text>
-          <text class="svg-sub" x="658" y="206">unreadable slot = '?'</text>
+          <text class="svg-sub" x="658" y="166">gate: size, then sharpness</text>
+          <text class="svg-sub" x="658" y="186">Awiros OCR, Indian plates</text>
+          <text class="svg-sub" x="658" y="206">per-character probabilities</text>
 
           <rect class="svg-box" x="947" y="112" width="220" height="104"></rect>
           <rect class="svg-box-k" x="947" y="112" width="220" height="104"></rect>
@@ -343,7 +345,7 @@
           <text class="svg-sub" x="963" y="206">3 agreeing reads &#8594; locked</text>
 
           <path class="flow" d="M 258 164 L 331 164" marker-end="url(#a-flow)"></path>
-          <text class="svg-edge" x="294" y="152" text-anchor="middle">frame, t</text>
+          <text class="svg-edge" x="294" y="152" text-anchor="middle">frame + t (video clock)</text>
 
           <path class="flow" d="M 563 164 L 636 164" marker-end="url(#a-flow)"></path>
           <text class="svg-edge" x="599" y="152" text-anchor="middle">crop, quality</text>
@@ -352,8 +354,8 @@
           <text class="svg-ident" x="904" y="152" text-anchor="middle">chars, confs</text>
 
           <path class="rej" d="M 752 222 L 752 258" marker-end="url(#a-rej)"></path>
-          <text class="svg-rej" x="752" y="276" text-anchor="middle">crop too small or blurry &#183; no plate found</text>
-          <text class="svg-rej" x="752" y="292" text-anchor="middle">&#8594; out/crops/fail/</text>
+          <text class="svg-rej" x="752" y="276" text-anchor="middle">too small &#183; too blurry &#183; no plate &#183; unreadable</text>
+          <text class="svg-rej" x="752" y="292" text-anchor="middle">&#8594; out/crops/fail/, labelled by reason</text>
 
           <!-- ============ hand-off ============ -->
           <path class="flow" d="M 447 222 L 447 320 L 142 320 L 142 462" marker-end="url(#a-flow)"></path>
@@ -391,7 +393,7 @@
           <text class="svg-own" x="1151" y="496" text-anchor="end">P5</text>
           <text class="svg-sub" x="963" y="522">out/frames/ annotated</text>
           <text class="svg-sub" x="963" y="542">out/map.png, dots and lines</text>
-          <text class="svg-sub" x="963" y="562">dashed line = inferred route</text>
+          <text class="svg-sub" x="963" y="562">out/crops/ evidence photo</text>
 
           <path class="flow" d="M 258 520 L 331 520" marker-end="url(#a-flow)"></path>
           <text class="svg-edge" x="294" y="508" text-anchor="middle">sighting row</text>
@@ -578,11 +580,11 @@
       </tr>
       <tr>
         <td>Person 2</td><td class="who">detector.py</td>
-        <td>Detection, tracking, colour and direction, and the single best crop per track. Appearance embeddings if time allows.</td>
+        <td>Detection, tracking, colour and direction, and the single best crop per track. Times every track by the frame's own clock. Appearance embeddings if time allows.</td>
       </tr>
       <tr>
         <td>Person 3</td><td class="who">plate_reader.py <span class="hard">HARD</span></td>
-        <td>The identity key. Per-character probabilities, not one score for the whole plate &mdash; the vote needs them.</td>
+        <td>The identity key. Awiros ANPR OCR, trained on Indian plates including two-line bike plates. Per-character probabilities, not one score for the whole plate &mdash; the vote needs them.</td>
       </tr>
       <tr>
         <td>Person 4</td><td class="who">database.py<br>linker.py <span class="hard">HARD</span></td>
@@ -607,11 +609,11 @@
     <ul class="limits">
       <li>
         <span class="who">Detection</span>
-        <p>Auto-rickshaws are not a COCO class. They currently come out as car or motorcycle, which then breaks the same-type filter in the linker.</p>
+        <p>Auto-rickshaws are not a COCO class. They come out as car or motorcycle, and if the two cameras disagree the linker's same-type filter rejects a real match.</p>
       </li>
       <li>
         <span class="who">OCR</span>
-        <p>Two-line bike plates, painted truck plates and night glare all read poorly with the pretrained model. Failing crops are saved for a future fine-tuning set.</p>
+        <p>Painted truck plates and night glare still read poorly. Two-line bike plates are handled &mdash; the OCR is trained on Indian dual-row plates. Every crop the reader rejects is saved to <code>out/crops/fail/</code> labelled with why, which is where the next round of tuning starts.</p>
       </li>
       <li>
         <span class="who">Thresholds</span>
@@ -623,7 +625,7 @@
       </li>
       <li>
         <span class="who">Identity</span>
-        <p>An embedding-only link is low confidence and is never used alone to identify a vehicle. Without a plate and without an embedding, no link is written at all.</p>
+        <p>An embedding-only link is low confidence and is never used alone to identify a vehicle. Appearance embeddings are not built yet, so today a sighting with no plate produces no links at all. That is deliberate: type, time and colour describe every white car on the road.</p>
       </li>
     </ul>
   </section>
