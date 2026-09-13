@@ -30,6 +30,15 @@ CONF = 0.4               # YOLO confidence floor
 TRACKER_YAML = "botsort.yaml"
 TRACK_TIMEOUT = 30       # frames unseen before a track counts as finished
 
+# quality = normalised(crop area) * normalised(sharpness), each capped at 1.0.
+# A crop at or above these values scores full marks on that half.
+QUALITY_MAX_AREA = 120000          # ~350x350 px
+QUALITY_MAX_SHARPNESS = 500.0      # cv2.Laplacian(...).var()
+
+# A track whose box centre moves less than this (pixels, first to last) is
+# called "stationary" rather than given a compass direction.
+DIRECTION_MIN_DISPLACEMENT_PX = 40
+
 # ---------------------------------------------------------------- plate reader
 MIN_PLATE_PX = 60        # reject crops narrower than this before OCR
 MIN_SHARPNESS = 50.0     # cv2.Laplacian(...).var() floor
@@ -128,6 +137,19 @@ CLEAN_MIN_CHAR_CONF = 0.8        # every character must beat this to be "clean"
 PARTIAL_MAX_UNKNOWN_FRACTION = 0.5   # more '?' than this and it is "unreadable"
 
 # ---------------------------------------------------------------- cameras
+# Unix time each clip started recording. The linker compares sightings across
+# cameras on one shared clock, so these are what make two videos comparable.
+# None = fall back to "now", which is only correct for a live source.
+#
+# PERSON 1: fill these in from the real recording times. Until you do, every
+# clip is treated as starting at the moment the run began, so all three look
+# simultaneous and no travel-time window can ever match.
+RECORDING_START = {
+    "C1": None,
+    "C2": None,
+    "C3": None,
+}
+
 # cam_id -> (lat, lon, human name). Fill in the real spots after recording.
 CAMERAS = {
     "C1": (23.0225, 72.5714, "Gate A"),

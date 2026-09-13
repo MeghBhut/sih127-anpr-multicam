@@ -2,11 +2,9 @@
 
 from pathlib import Path
 import re
-import time
 
 import cv2
 import numpy as np
-from ultralytics import YOLO
 
 from . import config
 
@@ -65,21 +63,33 @@ class Detector:
         self.model_path = model_path
         self.conf = conf
         self.tracker = _tracker_config()
-        self.models: dict[str, YOLO] = {}
+        self.models: dict[str, object] = {}
         self.state: dict[tuple[str, int], dict] = {}
         self.last_seen: dict[tuple[str, int], int] = {}
         self.finished: list[dict] = []
         self.frame_number: dict[str, int] = {}
 
-    def _model_for(self, cam_id: str) -> YOLO:
+    def _model_for(self, cam_id: str):
+        """One model per camera: model.track(persist=True) keeps its tracker
+        state on the instance, so sharing one would mix track ids."""
         if cam_id not in self.models:
+            try:
+                from ultralytics import YOLO
+            except ImportError as exc:      # keep the rest of the pipeline usable
+                raise RuntimeError(
+                    "detector needs ultralytics: pip install ultralytics") from exc
             self.models[cam_id] = YOLO(self.model_path)
         return self.models[cam_id]
 
-    def update(self, frame: np.ndarray, cam_id: str) -> list[dict]:
-        """Return live tracks: track_id, box, type, colour, crop, quality."""
+    def update(self, frame: np.ndarray, cam_id: str, t: float) -> list[dict]:
+        """Return live tracks: track_id, box, type, colour, crop, quality.
+
+        `t` is the frame's own unix timestamp from camera.py, NOT the time this
+        frame happens to be processed. The linker compares sightings across
+        cameras on that clock, so using time.time() here would time every
+        vehicle by when the laptop got round to it.
+        """
         self.frame_number[cam_id] = self.frame_number.get(cam_id, 0) + 1
-        now = time.time()
         model = self._model_for(cam_id)
         class_ids = [i for i, name in model.names.items() if name in VEHICLE_TYPES]
         results = model.track(frame, persist=True, tracker=self.tracker, conf=self.conf,
@@ -100,11 +110,13 @@ class Detector:
                 vehicle_type = VEHICLE_TYPES[model.names[int(raw_class)]]
                 colour, quality = _colour(crop), _quality(crop)
                 if key not in self.state:
-                    self.state[key] = {"t_in": now, "first_box": (x1, y1, x2, y2),
+                    self.state[key] = {"t_in": t, "first_box": (x1, y1, x2, y2),
                                        "last_box": (x1, y1, x2, y2), "best_crop": crop,
-                                       "best_quality": quality, "type_votes": {}, "colour_votes": {}}
+                                       "best_quality": quality, "type_votes": {}, "colour_votes": {},
+                                       "t_last": t}
                 state = self.state[key]
                 state["last_box"] = (x1, y1, x2, y2)
+                state["t_last"] = t
                 state["type_votes"][vehicle_type] = state["type_votes"].get(vehicle_type, 0) + 1
                 state["colour_votes"][colour] = state["colour_votes"].get(colour, 0) + 1
                 if quality > state["best_quality"]:
@@ -115,21 +127,32 @@ class Detector:
                              "colour": colour, "crop": crop, "quality": quality})
         for key, last_frame in list(self.last_seen.items()):
             if key[0] == cam_id and key not in seen and self.frame_number[cam_id] - last_frame >= config.TRACK_TIMEOUT:
-                self._finish(key, now)
+                self._finish(key)
         return live
 
-    def _finish(self, key: tuple[str, int], t_out: float) -> None:
+    def _finish(self, key: tuple[str, int]) -> None:
         state = self.state.pop(key, None)
         self.last_seen.pop(key, None)
         if state is None:
             return
         cam_id, track_id = key
-        self.finished.append({"track_id": track_id, "cam_id": cam_id, "t_in": state["t_in"], "t_out": t_out,
+        self.finished.append({"track_id": track_id, "cam_id": cam_id, "t_in": state["t_in"],
+                              "t_out": state["t_last"],
                               "type": max(state["type_votes"], key=state["type_votes"].get),
                               "colour": max(state["colour_votes"], key=state["colour_votes"].get),
                               "best_crop": state["best_crop"],
                               "direction": _direction(state["first_box"], state["last_box"]),
                               "embedding": None})
+
+    def flush(self, cam_id: str | None = None) -> None:
+        """Finish every track still open, for one camera or all of them.
+
+        Call this when a clip ends. Without it, any vehicle still on screen in
+        the last frame stays open forever and never becomes a sighting -- the
+        timeout that normally closes a track only runs from inside update().
+        """
+        for key in [k for k in list(self.state) if cam_id is None or k[0] == cam_id]:
+            self._finish(key)
 
     def finished_tracks(self) -> list[dict]:
         finished, self.finished = self.finished, []

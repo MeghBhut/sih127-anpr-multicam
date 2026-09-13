@@ -152,20 +152,39 @@ def save_track(ft: dict, groups: list[list[dict]]) -> list[int]:
 # The run
 # ---------------------------------------------------------------------------
 
-def run(sources: dict[str, str]) -> dict:
-    """sources: {"C1": "path/to/c1.mp4", ...}"""
+def run(sources: dict[str, str], fresh: bool = True) -> dict:
+    """sources: {"C1": "path/to/c1.mp4", ...}
+
+    fresh=True starts from an empty database. init_db keeps whatever is already
+    there, so without this a second run doubles every sighting and links run 1's
+    rows to run 2's. The contract asks for one reproducible command, so the
+    default is to start clean.
+    """
+    if fresh and config.DB_PATH.exists():
+        config.DB_PATH.unlink()
     database.init_db(str(config.DB_PATH))
     for cam_id, (lat, lon, name) in config.CAMERAS.items():
         database.save_camera(cam_id, lat, lon, name)
 
     detector = Detector()
-    # track_id -> list of read-groups. A new group is started on an ID switch.
-    groups: dict[int, list[list[dict]]] = defaultdict(lambda: [[]])
+    # (cam_id, track_id) -> list of read-groups. Track ids restart on every
+    # camera, so a bare id would merge C1's track 3 with C2's track 3.
+    groups: dict[tuple[str, int], list[list[dict]]] = defaultdict(lambda: [[]])
     switches = 0
 
     for cam_id, source in sources.items():
+        # Real recording start, so two clips share one clock. None only makes
+        # sense for a live source; for files it makes every clip look
+        # simultaneous and no travel-time window can match.
+        start_time = config.RECORDING_START.get(cam_id)
+        if start_time is None:
+            start_time = time.time()
+            logger.warning(
+                "[%s] no RECORDING_START in config; timing this clip from now. "
+                "Cross-camera links will be meaningless until person 1 fills it in.",
+                cam_id)
         try:
-            camera = Camera(cam_id, source, skip=config.SKIP, start_time=time.time())
+            camera = Camera(cam_id, source, skip=config.SKIP, start_time=start_time)
         except (IOError, OSError) as exc:
             # One unreadable source must not take the other cameras down.
             logger.error("[%s] skipped: %s", cam_id, exc)
@@ -174,10 +193,10 @@ def run(sources: dict[str, str]) -> dict:
         locked_tracks: set[int] = set()
         try:
             for f in camera.frames():
-                tracks = detector.update(f["frame"], cam_id)
+                tracks = detector.update(f["frame"], cam_id, f["t"])
 
                 for t in tracks:
-                    tid = t["track_id"]
+                    tid = (cam_id, t["track_id"])
                     current = groups[tid][-1]
 
                     if tid in locked_tracks:
@@ -208,12 +227,14 @@ def run(sources: dict[str, str]) -> dict:
                 visualizer.draw_frame(f["frame"], tracks)
 
                 for ft in detector.finished_tracks():
-                    save_track(ft, groups.pop(ft["track_id"], [[]]))
+                    save_track(ft, groups.pop((ft["cam_id"], ft["track_id"]), [[]]))
         finally:
             camera.release()
 
-    for ft in detector.finished_tracks():                       # drain the last tracks
-        save_track(ft, groups.pop(ft["track_id"], [[]]))
+        # Close any track still on screen in the last frame, or it is lost.
+        detector.flush(cam_id)
+        for ft in detector.finished_tracks():
+            save_track(ft, groups.pop((ft["cam_id"], ft["track_id"]), [[]]))
 
     links = linker.link_all()
     clones = linker.find_cloned_plates()
@@ -249,6 +270,8 @@ def main() -> None:
     p.add_argument("--videos", nargs="*", default=[],
                    help="cam_id=path pairs, e.g. C1=anpr/data/videos/c1.mp4")
     p.add_argument("--verbose", action="store_true", help="show per-pair link decisions")
+    p.add_argument("--append", action="store_true",
+                   help="add to the existing database instead of starting clean")
     args = p.parse_args()
 
     logging.basicConfig(
@@ -259,7 +282,7 @@ def main() -> None:
     sources = dict(v.split("=", 1) for v in args.videos) if args.videos else {
         cam_id: str(config.VIDEO_DIR / f"{cam_id.lower()}.mp4") for cam_id in config.CAMERAS
     }
-    run(sources)
+    run(sources, fresh=not args.append)
 
 
 if __name__ == "__main__":
