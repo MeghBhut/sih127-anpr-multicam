@@ -18,18 +18,19 @@ debugging (python plate_reader.py --image_path ... — see --mode below).
 import argparse
 import copy
 import json
-import subprocess
+import logging
 import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
-from open_image_models import create_detector
 
 try:
     from . import config
 except ImportError:
     import config  # running as a standalone script
+
+logger = logging.getLogger(__name__)
 
 _MODULE_DIR = Path(__file__).resolve().parent
 
@@ -41,8 +42,17 @@ _plate_detector = None
 
 
 def _get_plate_detector():
+    """Loaded on first use, not at import. A top-level import here meant a
+    missing OCR package stopped main.py from starting at all, so nobody could
+    run the camera, detector, database or linker either."""
     global _plate_detector
     if _plate_detector is None:
+        try:
+            from open_image_models import create_detector
+        except ImportError as exc:
+            raise RuntimeError(
+                'plate detector not installed. Run:  pip install "open-image-models[onnx]"'
+            ) from exc
         _plate_detector = create_detector(
             getattr(config, "PLATE_DETECTOR_MODEL", "yolo-v9-t-384-license-plate-end2end"),
             conf_thresh=getattr(config, "PLATE_DETECTOR_CONF_THRESH", None),
@@ -126,16 +136,21 @@ def _find_paddleocr(explicit_path=None):
 
 
 def _ensure_paddleocr(explicit_path=None):
+    """Put a PaddleOCR checkout on sys.path, or say how to get one.
+
+    This used to `git clone` PaddleOCR on the first plate read. That is a large
+    download in the middle of a run, which is the worst possible moment for it
+    on venue wifi. Cloning is now a setup step, done once, on purpose.
+    """
     root = _find_paddleocr(explicit_path)
     if root is None:
-        clone_target = _MODULE_DIR / "PaddleOCR"
-        print(f"ppocr not found. Cloning PaddleOCR into {clone_target} ...")
-        subprocess.check_call([
-            "git", "clone", "--depth", "1",
-            "https://github.com/PaddlePaddle/PaddleOCR.git",
-            str(clone_target),
-        ])
-        root = clone_target
+        raise RuntimeError(
+            "PaddleOCR not found. Run this once, from the repo root:"
+            "\n    git clone --depth 1 "
+            "https://github.com/PaddlePaddle/PaddleOCR.git "
+            f"{_MODULE_DIR / 'PaddleOCR'}"
+            "\nor set config.PADDLEOCR_DIR to an existing checkout."
+        )
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
 
@@ -154,24 +169,30 @@ def _ensure_probs(logits):
     return _softmax(logits, axis=-1)
 
 
-def _resize_for_rec(img_bgr, target_shape):
-    _, h, w = target_shape
-    img_h, img_w = img_bgr.shape[:2]
-    ratio = h / img_h
-    new_w = min(int(img_w * ratio), w)
-    resized = cv2.resize(img_bgr, (new_w, h))
-    if new_w < w:
-        padded = np.zeros((h, w, 3), dtype=np.uint8)
-        padded[:, :new_w, :] = resized
-        resized = padded
-    return resized
-
-
 def _preprocess(img_bgr, target_shape):
-    img = _resize_for_rec(img_bgr, target_shape)
-    img = img.astype(np.float32) / 255.0
-    img = (img - 0.5) / 0.5
-    return img.transpose((2, 0, 1))
+    """Plate crop -> the CHW float tensor the recogniser expects.
+
+    Order matters. PaddleOCR normalises first and then pads the remaining
+    width with 0.0, which after its own (x/255 - 0.5) / 0.5 corresponds to
+    mid grey. Padding with black pixels first and normalising afterwards puts
+    -1.0 there instead, which is not what these weights were trained on, and
+    almost every plate is narrower than the 320px target so almost every read
+    was affected. Keep this matching ppocr/data/imaug/rec_img_aug.py.
+    """
+    channels, target_h, target_w = target_shape
+    img_h, img_w = img_bgr.shape[:2]
+
+    # max(1, ...): a very tall, narrow box rounds to zero width and cv2.resize
+    # raises, which used to end the whole run.
+    new_w = max(1, min(int(img_w * (target_h / img_h)), target_w))
+    resized = cv2.resize(img_bgr, (new_w, target_h))
+
+    norm = resized.astype(np.float32).transpose((2, 0, 1)) / 255.0
+    norm = (norm - 0.5) / 0.5
+
+    padded = np.zeros((channels, target_h, target_w), dtype=np.float32)
+    padded[:, :, :new_w] = norm
+    return padded
 
 
 def _load_awiros_model(weights_path=None, dict_path=None, device=None, paddleocr_dir=None, force=False):
@@ -286,8 +307,13 @@ def _ctc_decode_with_gaps(probs, character_list, blank_idx=0,
                     best_class, best_prob = c, float(p[c])
 
             if best_prob >= gap_prob_threshold:
+                # A recovered character is the model's runner-up inside a gap,
+                # not something it actually read. Cap its confidence so it can
+                # never be the thing that locks a plate; it still contributes
+                # to the vote, it just cannot carry the decision alone.
+                capped = min(best_prob, getattr(config, "OCR_RECOVERED_MAX_CONF", 0.45))
                 chars.append(character_list[best_class])
-                confs.append(best_prob)
+                confs.append(capped)
                 debug.append("recovered")
             else:
                 # Don't silently shorten the plate string.
@@ -359,12 +385,52 @@ def _read_awiros(plate_crop: np.ndarray, gap_prob_threshold=None, min_char_confi
 # ---------------------------------------------------------------------------
 # Frozen public interface
 # ---------------------------------------------------------------------------
+_fail_crops_saved = 0
+
+
+def _save_fail_crop(crop: np.ndarray, reason: str) -> None:
+    """Keep a crop we could not read, for the fine-tuning set and risk slide."""
+    global _fail_crops_saved
+    if not getattr(config, "SAVE_FAIL_CROPS", False):
+        return
+    if _fail_crops_saved >= getattr(config, "MAX_FAIL_CROPS", 200):
+        return
+    if crop is None or crop.size == 0:
+        return
+    try:
+        config.FAIL_CROP_DIR.mkdir(parents=True, exist_ok=True)
+        path = config.FAIL_CROP_DIR / f"{_fail_crops_saved:04d}_{reason}.jpg"
+        cv2.imwrite(str(path), crop)
+        _fail_crops_saved += 1
+    except Exception as exc:                     # never let bookkeeping break a run
+        logger.debug("could not save failing crop: %s", exc)
+
+
+def _sharpness(crop: np.ndarray) -> float:
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+    return float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+
 def passes_gate(crop: np.ndarray) -> bool:
-    """Cheap pre-check before running OCR: min crop size and min sharpness."""
+    """Cheap pre-check before running OCR: min crop size and min sharpness.
+
+    Both halves matter. Each vehicle only gets MAX_OCR_PER_TRACK attempts, and
+    a blurry frame spends one of them to produce nothing. The size test is
+    against MIN_VEHICLE_PX, not MIN_PLATE_PX -- this sees the whole vehicle,
+    and the plate's own size is checked after the detector locates it.
+    """
     if crop is None or crop.size == 0:
         return False
+
     h, w = crop.shape[:2]
-    return min(h, w) >= config.MIN_PLATE_PX
+    if min(h, w) < config.MIN_VEHICLE_PX:
+        return False
+
+    if _sharpness(crop) < config.MIN_SHARPNESS:
+        _save_fail_crop(crop, "blurry")
+        return False
+
+    return True
 
 
 def read_plate(crop: np.ndarray) -> dict | None:
@@ -377,23 +443,47 @@ def read_plate(crop: np.ndarray) -> dict | None:
     if not passes_gate(crop):
         return None
 
-    plate_box = _localize_plate(crop)
-    if plate_box is None:
-        return None
+    # The contract is "returns None when there is no plate". An exception is
+    # not part of that contract, and read_plate runs once per frame per track,
+    # so anything thrown here used to end the run for all three videos.
+    try:
+        plate_box = _localize_plate(crop)
+        if plate_box is None:
+            _save_fail_crop(crop, "no_plate_found")
+            return None
 
-    x1, y1, x2, y2 = plate_box
-    plate_crop = crop[y1:y2, x1:x2]
-    if plate_crop.size == 0:
-        return None
+        x1, y1, x2, y2 = plate_box
+        plate_crop = crop[y1:y2, x1:x2]
+        if plate_crop.size == 0:
+            return None
 
-    chars, confs, _debug = _read_awiros(plate_crop)
-    if not chars:
+        # Now that we know where the plate is, check whether it is big enough
+        # to be worth reading. This is what MIN_PLATE_PX was always meant for.
+        if (x2 - x1) < config.MIN_PLATE_PX:
+            _save_fail_crop(plate_crop, "plate_too_small")
+            return None
+
+        chars, confs, debug = _read_awiros(plate_crop)
+        if not chars:
+            _save_fail_crop(plate_crop, "no_characters")
+            return None
+
+        if all(c == "?" for c in chars):
+            _save_fail_crop(plate_crop, "all_unknown")
+            return None
+
+    except Exception as exc:
+        logger.warning("read_plate failed on one crop, skipping it: %s", exc)
         return None
 
     return {
         "chars": chars,
         "confs": confs,
         "plate_box": plate_box,
+        # Per-character provenance: "kept" / "low_conf" / "recovered" /
+        # "unresolved". A "recovered" character is a guess, not something the
+        # model read. Voting and the deck both want to know the difference.
+        "debug": debug,
     }
 
 

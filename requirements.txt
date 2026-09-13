@@ -7,10 +7,27 @@ opencv-python>=4.9
 # person 2 — detection + tracking (YOLO + BoT-SORT)
 ultralytics>=8.3
 
-# person 3 — plate detection + OCR
-# GPU:  pip install "fast-alpr[onnx-gpu]"
-fast-alpr>=0.1
+# person 3 — plate localisation (open-image-models, the detector fast-alpr uses)
+open-image-models[onnx]>=0.3
+
+# person 3 — character reading: Awiros ANPR OCR (PP-OCRv5 / SVTR_HGNet).
+# Trained on Indian plates, handles single- and dual-row.
+# GPU instead:  pip install paddlepaddle-gpu
+paddlepaddle>=2.6
+safetensors>=0.4
 
 # person 5 — map and deck images
-folium>=0.16
 matplotlib>=3.8
+
+# ---------------------------------------------------------------------------
+# Two things pip cannot install. Do these once, before the first run.
+#
+# 1. PaddleOCR source (the Awiros weights load through ppocr):
+#      git clone --depth 1 https://github.com/PaddlePaddle/PaddleOCR.git anpr/PaddleOCR
+#
+# 2. The OCR weights, into anpr/ :
+#      model.safetensors  and  en_dict.txt
+#      from https://huggingface.co/Awiros/anpr-ocr
+#
+# Both are gitignored on purpose — do not commit them.
+# ---------------------------------------------------------------------------

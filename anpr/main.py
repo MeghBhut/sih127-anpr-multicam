@@ -10,6 +10,8 @@ import logging
 import time
 from collections import defaultdict
 
+import cv2
+
 from . import config, database, linker, plate_logic, plate_reader, visualizer
 from .camera import Camera
 from .detector import Detector
@@ -156,13 +158,29 @@ def build_map_links(links: list[dict], sightings: list[dict]) -> list[dict]:
 
 
 def save_track(ft: dict, groups: list[list[dict]]) -> list[int]:
-    """Write one row per segment of a finished track. Returns the new row ids."""
+    """Write one row per segment of a finished track. Returns the new row ids.
+
+    Also writes the vehicle's best crop to out/crops/. Every sighting row
+    stores a crop_path, and until now nothing ever created the file it named,
+    so the database pointed at photos that did not exist. That crop is the
+    evidence image for the vehicle.
+    """
     if not groups:
         groups = [[]]
     ids = []
     for i, group in enumerate(groups):
         suffix = "" if len(groups) == 1 else f"_{i}"
-        ids.append(database.save_sighting(build_sighting(ft, group, suffix)))
+        sighting = build_sighting(ft, group, suffix)
+
+        best_crop = ft.get("best_crop")
+        if best_crop is not None and getattr(best_crop, "size", 0):
+            try:
+                config.CROP_DIR.mkdir(parents=True, exist_ok=True)
+                cv2.imwrite(sighting["crop_path"], best_crop)
+            except Exception as exc:
+                logger.warning("could not write crop %s: %s", sighting["crop_path"], exc)
+
+        ids.append(database.save_sighting(sighting))
     return ids
 
 

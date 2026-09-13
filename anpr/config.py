@@ -40,8 +40,18 @@ QUALITY_MAX_SHARPNESS = 500.0      # cv2.Laplacian(...).var()
 DIRECTION_MIN_DISPLACEMENT_PX = 40
 
 # ---------------------------------------------------------------- plate reader
-MIN_PLATE_PX = 60        # reject crops narrower than this before OCR
-MIN_SHARPNESS = 50.0     # cv2.Laplacian(...).var() floor
+# Two different gates, deliberately named apart. MIN_VEHICLE_PX is checked on
+# the whole vehicle crop before OCR runs at all; MIN_PLATE_PX is checked on the
+# detected plate box afterwards. A car is always bigger than 60px, so applying
+# the plate threshold to the vehicle made the gate do nothing.
+MIN_VEHICLE_PX = 80      # smallest vehicle crop worth running the detector on
+MIN_PLATE_PX = 60        # smallest detected plate box worth running OCR on
+MIN_SHARPNESS = 50.0     # cv2.Laplacian(...).var() floor on the vehicle crop
+
+# Crops that fail the gate or come back unreadable are kept for the future
+# fine-tuning set and the risk slide. Capped so a long run cannot fill the disk.
+SAVE_FAIL_CROPS = True
+MAX_FAIL_CROPS = 200
 
 # fast-alpr's underlying plate detector (open-image-models). Larger image
 # size = more accurate, slower. Available sizes: 256/384/416/512/640, plus
@@ -77,6 +87,12 @@ OCR_GAP_PROB_THRESHOLD = 0.15
 # 0.0 confidence rather than passed downstream looking as reliable as a
 # high-confidence read.
 OCR_MIN_CHAR_CONFIDENCE = 0.30
+
+# A gap-recovered character is a guess from the model's runner-up probabilities,
+# not something it actually read. Cap it below MIN_CHAR_CONF so a guess can
+# never be what locks a plate. Raise it if recovery proves reliable on the real
+# footage; the read still counts, it just cannot carry the decision alone.
+OCR_RECOVERED_MAX_CONF = 0.45
 
 # Timestep gap must be wider than (typical_spacing * this) before it's
 # treated as a possible dropped character (the HR38AB2421 fix).
