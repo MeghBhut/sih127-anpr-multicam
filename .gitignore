@@ -10,6 +10,16 @@ env/
 *.pt
 *.onnx
 *.pth
+*.safetensors
+anpr/en_dict.txt
+
+# PaddleOCR clones itself here on first OCR call (plate_reader._ensure_paddleocr)
+anpr/PaddleOCR/
+PaddleOCR/
+
+# Scratch output from the linker tools
+demo.db
+threshold_report.json
 
 # Test footage — too big for git, share over Drive
 anpr/data/videos/*

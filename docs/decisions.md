@@ -6,46 +6,27 @@ Add a row when you make a call the others would be surprised by.
 
 ---
 
-## 1. `linker.py` delegates its maths to `plate_logic.py`
+## 1. linker.py is person 4's; plate_logic.py kept only the voting
 
 **Owner affected:** person 4 (linker), person 6 (plate_logic)
 
-The contract gives person 4 the signatures `plate_distance(a, b)` and `link_score(a, b)`.
-Person 6 had already written both in `plate_logic.py`. Two copies of an edit distance and a
-weighted score would drift apart by day 4, and the version on the slide would not be the
-version in the DB.
+The scaffold had `linker.py` forwarding `plate_distance` and `link_score` to
+`plate_logic.py`, so there was one copy of the maths. Person 4 then delivered a
+full `linker.py` with its own implementation, and that is the one in the repo:
+it is better than the placeholder (bidirectional camera graph, `'?'`-aware
+usability checks, a hard ceiling on evidence-free scores) and person 4 owns
+linking.
 
-So `anpr/linker.py` keeps the contract's signatures and forwards the maths:
+So `plate_logic.link_score`, `plate_logic.plausible` and
+`plate_logic.embedding_cos` are **no longer called by the pipeline**. They are
+left in place because they document the reasoning and person 6 can rebuild them
+on a whiteboard, but the live scoring is `anpr/linker.py`. Do not fix a scoring
+bug in `plate_logic.py` and expect the run to change.
 
-```python
-def plate_distance(a, b):        return plate_logic.plate_distance(a, b)
-def link_score(a, b):            return plate_logic.link_score(_as_point(a), _as_point(b), CAMERA_GRAPH)
-```
+Still live from `plate_logic.py`:
 
-**Person 4 still owns:** `link_all` (candidate search), `find_cloned_plates`,
-`CAMERA_GRAPH`, and both thresholds. Tuning happens in `config.py`, not by editing
-scoring code.
-
-**Person 6 still owns:** what "similar" means — the weights, the confusion table, the
-hard rejects.
-
-If P4 wants the maths back, move it wholesale and delete it from `plate_logic.py`. Do not
-fork it.
-
-### `_as_point`
-
-`database` stores a sighting as `{"cam_id", "t_in", "t_out", "embedding", ...}`.
-`plate_logic` predates the schema and expects a flatter `{"cam", "t", "emb", ...}`.
-`linker._as_point` is the one adapter between them, so neither side has to change:
-
-```python
-{"cam": s["cam_id"], "t": s["t_in"], "emb": s.get("embedding"), ...}
-```
-
-Note it uses `t_in` — a vehicle's arrival time at the camera, which is what the travel
-window is measured against. Not `t_out`.
-
----
+- `vote`, `fix_by_format`, `expected_types` -- the whole voting path
+- `plate_distance` -- used by `main.is_id_switch`
 
 ## 2. Camera coordinates and travel windows are placeholders
 
@@ -71,6 +52,11 @@ then the labelled pairs, then the thresholds.
 ## 3. A missing embedding is *no evidence*, not *zero similarity*
 
 **Owner affected:** person 2 (embeddings are the last, optional task), person 4
+
+> Note: this was fixed in `plate_logic.link_score`, which [[section 1]] retired.
+> Person 4's `linker._cosine_similarity` reaches the same conclusion independently
+> and returns `None` for a missing vector. The lesson still applies, and their
+> `_conservative_fallback` partly reintroduces it -- see section 4.
 
 `Detector.finished_tracks()` may return `embedding: None` — the contract marks it
 "optional, only if time". The original `link_score` did:
@@ -125,7 +111,70 @@ but do not rely on it: **always store `conf` alongside a plate.**
 
 ---
 
-## 4. What is not in git
+## 4. plate_status is written by main.py, and two safety rules depend on it
+
+**Owner affected:** person 4 (linker), person 6 (main)
+
+Person 4's `database.py` stores a `plate_status` on every sighting, and
+`linker.py` gates **both** of its last-line safety rules on it:
+
+- `link_score` -> "never merge two clean plates that differ" needs `_is_clean`
+- `find_cloned_plates` -> only considers sightings with status `clean`
+
+`save_sighting` does not compute the status; it defaults to `uncertain` for any
+plate it is handed. So until something classified the plate, both rules were
+switched off. Two vehicles whose plates differ by one real character
+(`GJ01AB1234` vs `GJ01AB1284`) linked at score 0.82, and a plate seen on two
+cameras 3 seconds apart raised no clone alert.
+
+Voting is the only place that knows how good a read was, so `main.classify_plate`
+does it:
+
+| status | meaning |
+|---|---|
+| `missing` | nothing was read |
+| `unreadable` | read, but more than `PARTIAL_MAX_UNKNOWN_FRACTION` is `'?'` |
+| `partial` | some `'?'`, enough known characters to still compare |
+| `clean` | locked, no `'?'`, every character above `CLEAN_MIN_CHAR_CONF` |
+| `uncertain` | read in full, but not confidently enough to be `clean` |
+
+`plate_quality` goes with it: known-character fraction times mean confidence.
+Person 4's linker weights the plate term by it, so it must not flatter a read.
+
+Two consequences worth knowing:
+
+**A partial plate is now kept, not discarded.** `build_sighting` used to null out
+any plate containing `'?'`. The linker scores `'?'` against any character at 0.1,
+so a partial read is real evidence and throwing it away lost links. Only a plate
+that was never read becomes `None`.
+
+**One hole is still open.** The clean-plate reject needs *both* sides clean. When
+one side lands just under `CLEAN_MIN_CHAR_CONF`, two genuinely different plates
+can still link -- measured at 0.768 against a 0.75 threshold. The cause is on
+person 4's side: `plate_similarity` normalises the edit distance by plate length,
+so one wrong character in ten still scores 0.9 similar, and when embeddings are
+absent `_conservative_fallback` is substituted into the embedding slot, which
+counts colour twice. Person 4 owns that fix.
+
+---
+
+## 5. ID-switch guard
+
+**Owner affected:** person 2 (tracker), person 6 (main)
+
+A tracker sometimes hands one `track_id` to two vehicles. Voting across that
+boundary produces a plate belonging to neither. `main.is_id_switch` watches for
+two reads that are each clean and at least `config.ID_SWITCH_MIN_DISTANCE` apart;
+when it sees one it starts a new read group, and the finished track is written as
+one sighting per group (`C2_17_0.jpg`, `C2_17_1.jpg`). Segment times come from the
+reads themselves, not the tracker's `t_in`/`t_out`.
+
+This is a safety net, not a fix. If it fires often, the tracker needs attention.
+`python -m anpr.main` prints the count.
+
+---
+
+## 6. What is not in git
 
 **Test footage** (`anpr/data/videos/`) — too big, and it is our own recording. Share over
 Drive; note each clip's real start time in the sheet, because `Camera(start_time=...)` is
