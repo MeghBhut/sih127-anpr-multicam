@@ -15,9 +15,15 @@ FRAME_DIR = OUT_DIR / "frames"
 CROP_DIR = OUT_DIR / "crops"
 FAIL_CROP_DIR = CROP_DIR / "fail"
 MAP_PNG = OUT_DIR / "map.png"
+ROAD_MAP_PNG = OUT_DIR / "tracker_map.png"   # the schematic tracker map
+ROUTE_DIR = OUT_DIR / "routes"               # one map per tracked vehicle
+JOURNEY_DIR = OUT_DIR / "journeys"    # one evidence card per linked vehicle
+MONTAGE_DIR = OUT_DIR / "montage"     # all cameras at one moment
+MONTAGE_COUNT = 6                     # how many moments to render
 DB_PATH = OUT_DIR / "anpr.db"
 
-for _d in (VIDEO_DIR, FRAME_DIR, CROP_DIR, FAIL_CROP_DIR):
+for _d in (VIDEO_DIR, FRAME_DIR, CROP_DIR, FAIL_CROP_DIR, JOURNEY_DIR,
+           MONTAGE_DIR, ROUTE_DIR):
     _d.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------------- camera
@@ -62,14 +68,28 @@ PLATE_DETECTOR_MODEL = "yolo-v9-t-384-license-plate-end2end"
 # None = use the model's own default threshold (0.25 for the yolo-v9-t
 # family). Raise this if the detector reports false-positive "plates";
 # lower it if it's missing real ones.
+#
+# Measured on 300 frames of c1.mp4: 1076 raw detections, of which only 205
+# were even plate-shaped. Raising this to 0.45 leaves 146 and to 0.60 leaves
+# 115 -- but that trades away real plates too, so tune it against footage
+# rather than guessing.
 PLATE_DETECTOR_CONF_THRESH = None
+
+# Shape sanity on whatever the detector calls a plate. These are physical
+# facts about number plates, not tuning knobs: a plate is never taller than
+# it is wide (a dual-row plate is roughly square, ~1.0-2.0), and it never
+# fills half the vehicle it is bolted to. Without these the detector happily
+# reports a tarpaulin or a windscreen as a plate at 0.69 confidence, and each
+# one spends part of that vehicle's OCR budget producing nothing.
+MIN_PLATE_ASPECT = 1.0          # width / height
+MAX_PLATE_AREA_FRACTION = 0.5   # of the vehicle crop
 
 # Path to the cloned PaddleOCR repo. None = auto-detect next to
 # plate_reader.py, or auto-clone there if not found anywhere.
 PADDLEOCR_DIR = None
 
 # Awiros-ANPR-OCR weights + character dictionary.
-# Download both from: https://huggingface.co/surendran0m07/anpr-ocr
+# Download both from: https://huggingface.co/Awiros/anpr-ocr  (the official repo)
 AWIROS_WEIGHTS_PATH = BASE / "model.safetensors"
 AWIROS_DICT_PATH = BASE / "en_dict.txt"
 
@@ -105,6 +125,22 @@ OCR_GAP_WIDTH_MULTIPLIER = 1.8
 # aren't currently distinguishable. Single-row plates are typically wide
 # (ratio > ~3), true dual-row plates are closer to square (ratio ~1-2).
 DUAL_ROW_ASPECT_RATIO_THRESHOLD = 2.0
+
+# Map rendering. Camera pins are drawn over real street tiles fetched once from
+# OpenStreetMap and cached, so the map still renders offline afterwards and
+# still makes sense when the prototype grows from 2 cameras to 5 or 6 spread
+# across different streets. If the fetch fails the map falls back to a plain
+# plot rather than failing the run.
+MAP_DIR = DATA_DIR / "map_cache"
+MAP_TILE_URL = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+MAP_PADDING = 0.25        # fraction of the camera spread added around the edges
+MAP_MAX_TILES = 4         # per axis; more tiles = more detail, slower first fetch
+MAP_OFFLINE = False       # True skips the network entirely
+
+# The geographic map (out/map.png) is off. It drew camera dots on a street
+# view with nothing about vehicles, and out/tracker_map.png replaces it.
+# Set True if you ever want the real-coordinates version back.
+DRAW_GEO_MAP = False
 
 # How often to write an annotated frame to out/frames/. 1 = every processed
 # frame (thousands of files), 0 = never. These are the deck screenshots.
@@ -156,6 +192,45 @@ WEIGHT_COLOUR_ONLY = 0.25
 CLEAN_MIN_CHAR_CONF = 0.8        # every character must beat this to be "clean"
 PARTIAL_MAX_UNKNOWN_FRACTION = 0.5   # more '?' than this and it is "unreadable"
 
+# ---------------------------------------------------------- schematic map
+# The tracker map is a SCHEMATIC, not a geographic one: you draw the streets
+# yourself as polylines and drop cameras onto them. Two reasons that beats a
+# real map for this prototype -- it needs no network at demo time, and a
+# hand-drawn layout of the two streets we actually filmed reads instantly,
+# where a satellite view of Ahmedabad does not.
+#
+# ROADS: name -> list of (x, y) points, in an abstract canvas space. Where two
+# roads share a point (within JUNCTION_TOLERANCE px) they become a junction,
+# so a vehicle's route between cameras follows real roads rather than a
+# straight line. Adding a third street with two more cameras is four lines
+# here and no code change.
+# Two streets meeting at a right angle, a camera at the start of each.
+# street_1 runs left-to-right and ends at the corner; street_2 starts at the
+# bottom and runs up INTO that same corner, so the two roads share the point
+# (760, 160) and the junction is real. A vehicle goes C1 -> corner -> C2.
+ROADS = {
+    "street_1": [(120, 160), (760, 160)],    # horizontal, camera at its left end
+    "street_2": [(760, 540), (760, 160)],    # vertical, camera at its bottom end
+}
+
+# cam_id -> (road name, how far along it, 0.0 = start, 1.0 = end)
+#
+# Both cameras sit at 0.0, the start of their own road, which puts them at the
+# two far ends with the corner between them. Only list cameras you actually
+# filmed: one with no clip still draws as "0 seen", which on a slide reads as
+# more cameras than you have.
+CAMERA_PLACEMENT = {
+    "C1": ("street_1", 0.0),
+    "C2": ("street_2", 0.0),
+}
+
+JUNCTION_TOLERANCE = 14      # px; roads closer than this are treated as joined
+
+# One route card per identified vehicle, capped so a busy run does not write
+# hundreds of images. Vehicles seen at more cameras are drawn first, then the
+# ones whose plate was read most cleanly.
+MAX_ROUTE_CARDS = 40
+
 # ---------------------------------------------------------------- cameras
 # Unix time each clip started recording. The linker compares sightings across
 # cameras on one shared clock, so these are what make two videos comparable.
@@ -164,9 +239,14 @@ PARTIAL_MAX_UNKNOWN_FRACTION = 0.5   # more '?' than this and it is "unreadable"
 # PERSON 1: fill these in from the real recording times. Until you do, every
 # clip is treated as starting at the moment the run began, so all three look
 # simultaneous and no travel-time window can ever match.
+# Both clips are treated as starting at the same instant. The exact value does
+# not matter while they share it -- only the difference between cameras does.
+# Replace with the real recording times when person 1 has them.
+_ASSUMED_START = 1789315000.0
+
 RECORDING_START = {
-    "C1": None,
-    "C2": None,
+    "C1": _ASSUMED_START,
+    "C2": _ASSUMED_START,
     "C3": None,
 }
 
@@ -174,7 +254,6 @@ RECORDING_START = {
 CAMERAS = {
     "C1": (23.0225, 72.5714, "Gate A"),
     "C2": (23.0300, 72.5800, "Crossing B"),
-    "C3": (23.0380, 72.5900, "Exit C"),
 }
 
 # (from, to) -> (min_seconds, max_seconds) realistic travel window.

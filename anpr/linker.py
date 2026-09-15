@@ -61,10 +61,15 @@ WEIGHT_COLOUR: float = _cfg("WEIGHT_COLOUR", 0.10)
 WEIGHT_EMBEDDING_ONLY: float = _cfg("WEIGHT_EMBEDDING_ONLY", 0.75)
 WEIGHT_COLOUR_ONLY: float = _cfg("WEIGHT_COLOUR_ONLY", 0.25)
 
-# Placeholder camera graph for the three test cameras. Replace with real
-# measured travel-time ranges (seconds) when available -- these are
-# deliberately generous/plausible-looking placeholders, not measurements.
-CAMERA_GRAPH: dict[tuple[str, str], tuple[float, float]] = {
+# Travel-time windows come from config.py, so tuning them means editing one
+# file. This module used to keep its own copy, which meant a change in config
+# silently did nothing -- the values below are only a fallback for running
+# linker.py without a config present.
+#
+# Every pair needs BOTH directions. plausible() looks the pair up in
+# chronological order, so a missing reverse entry silently kills every link
+# that way round.
+_FALLBACK_GRAPH: dict[tuple[str, str], tuple[float, float]] = {
     ("C1", "C2"): (20.0, 180.0),
     ("C2", "C1"): (20.0, 180.0),
     ("C2", "C3"): (15.0, 150.0),
@@ -72,6 +77,10 @@ CAMERA_GRAPH: dict[tuple[str, str], tuple[float, float]] = {
     ("C1", "C3"): (40.0, 300.0),
     ("C3", "C1"): (40.0, 300.0),
 }
+
+CAMERA_GRAPH: dict[tuple[str, str], tuple[float, float]] = (
+    getattr(config, "CAMERA_GRAPH", None) or _FALLBACK_GRAPH
+)
 
 # Vehicle types considered mutually exclusive enough to strongly reject a
 # match even under weak plate evidence. Anything not listed here as a

@@ -88,6 +88,18 @@ def is_valid(plate: str) -> bool:
 CHARSET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ?"
 
 
+def normalise_char(c: str) -> str:
+    """One OCR character -> something CHARSET knows about.
+
+    The Awiros model's dictionary is 64 symbols and includes lowercase, so it
+    can return 'o' where the plate says 'O'. Indian plates are uppercase
+    alphanumerics, so uppercase it; anything still unrecognised becomes '?'
+    rather than blowing up the vote.
+    """
+    c = (c or "").upper()
+    return c if c in CHARSET else "?"
+
+
 def vote(reads: list[dict], min_char_conf: float = 0.5):
     """
     Returns (plate_string, per_position_conf, locked: bool)
@@ -99,6 +111,12 @@ def vote(reads: list[dict], min_char_conf: float = 0.5):
     """
     if not reads:
         return "", [], False
+
+    # Normalise every character up front: fix_by_format's confusion tables are
+    # keyed on uppercase, and the scoring step looks each character up in
+    # CHARSET. A lowercase or unexpected symbol used to raise ValueError here
+    # and end the whole run.
+    reads = [{**r, "chars": [normalise_char(c) for c in r["chars"]]} for r in reads]
 
     # a) length vote (weighted by quality)
     length_votes = {}
@@ -120,7 +138,10 @@ def vote(reads: list[dict], min_char_conf: float = 0.5):
         for pos, (c, p) in enumerate(zip(fixed, confs)):
             if c == "?":
                 continue
-            score[pos, CHARSET.index(c)] += p * q
+            idx = CHARSET.find(c)
+            if idx < 0:
+                continue                       # unknown symbol contributes nothing
+            score[pos, idx] += p * q
 
     plate, out_conf = [], []
     total_weight = sum(q for _, _, q in corrected) or 1.0

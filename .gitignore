@@ -25,15 +25,23 @@ threshold_report.json
 anpr/data/videos/*
 !anpr/data/videos/.gitkeep
 
-# Run output — regenerate with one command
-anpr/out/frames/*
-anpr/out/crops/*
-anpr/out/map.png
-anpr/out/*.db
-!anpr/out/frames/.gitkeep
-!anpr/out/crops/.gitkeep
+# Run output - regenerate with one command
+anpr/out/**
+!anpr/out/
+!anpr/out/frames/
+!anpr/out/crops/
 !anpr/out/crops/fail/
-!anpr/out/crops/fail/.gitkeep
+!anpr/out/journeys/
+!anpr/out/montage/
+!anpr/out/**/.gitkeep
+
+# rollback copy main.py keeps while a run replaces the database
+*.prev.db
+
+# Cached OpenStreetMap tiles for the map, and the tracker yaml the detector
+# generates on first run
+anpr/data/map_cache/
+anpr/botsort_fixed_cam.yaml
 
 # Editors / OS
 .vscode/

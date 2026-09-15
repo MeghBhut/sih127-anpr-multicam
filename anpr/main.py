@@ -9,10 +9,12 @@ import argparse
 import logging
 import time
 from collections import defaultdict
+from pathlib import Path
 
 import cv2
 
-from . import config, database, linker, plate_logic, plate_reader, visualizer
+from . import (config, database, linker, plate_logic, plate_reader,
+               roadmap, visualizer)
 from .camera import Camera
 from .detector import Detector
 
@@ -139,6 +141,146 @@ def build_sighting(ft: dict, group: list[dict], suffix: str = "") -> dict:
     }
 
 
+def build_routes(links: list[dict], sightings: list[dict]) -> list[str]:
+    """One schematic map per identified vehicle: this plate went this way.
+
+    Every vehicle whose plate was read gets a card, not only the ones that
+    linked across cameras. A vehicle seen at a single camera is a real result
+    -- the system identified it and knows where and when -- and its card shows
+    exactly that, with the path extending on its own the moment a second
+    camera sees the same plate.
+
+    Links matter for ordering, not for inclusion: a vehicle the linker joined
+    across two cameras is the more interesting card, so those are drawn first.
+    """
+    by_id = {s["id"]: s for s in sightings}
+
+    linked_ids: set[int] = set()
+    for link in links:
+        if link["a_id"] in by_id and link["b_id"] in by_id:
+            linked_ids.add(link["a_id"])
+            linked_ids.add(link["b_id"])
+
+    # Group every readable sighting by its plate. Two cameras reading the same
+    # plate belong on one card even if the linker did not join them.
+    groups: dict[str, list[dict]] = {}
+    for s in sightings:
+        plate = s.get("plate")
+        if not plate or s.get("plate_status") in (None, "missing", "unreadable"):
+            continue
+        groups.setdefault(plate, []).append(s)
+
+    def rank(item):
+        plate, rows = item
+        cameras = len({r["cam_id"] for r in rows})
+        was_linked = any(r["id"] in linked_ids for r in rows)
+        best_quality = max((r.get("plate_quality") or 0.0) for r in rows)
+        return (-int(was_linked), -cameras, -best_quality)
+
+    out = []
+    written: set[Path] = set()
+    for plate, rows in sorted(groups.items(), key=rank)[:config.MAX_ROUTE_CARDS]:
+        ordered = sorted(rows, key=lambda r: r["t_in"])
+        safe = plate.replace("?", "x").replace("/", "_")
+        path = config.ROUTE_DIR / f"{safe}.jpg"
+        try:
+            out.append(roadmap.draw_route(plate, ordered, str(path)))
+            written.add(path.resolve())
+        except Exception as exc:
+            logger.warning("route map failed for %s: %s", plate, exc)
+
+    # Sweep leftovers from earlier runs only AFTER the new set exists. Cards
+    # are named after the plate, so one from a previous run would otherwise
+    # sit among these looking like part of it -- but clearing the folder up
+    # front left nothing to look at while a run was going, and nothing at all
+    # if it failed.
+    for stale in config.ROUTE_DIR.glob("*.jpg"):
+        if stale.resolve() not in written:
+            try:
+                stale.unlink()
+            except OSError as exc:
+                logger.debug("could not remove stale card %s: %s", stale, exc)
+    return out
+
+
+def build_journeys(links: list[dict], sightings: list[dict]) -> list[str]:
+    """One photographic evidence card per identified vehicle.
+
+    The route card in out/routes/ says WHERE a vehicle went; this says what
+    the cameras actually saw -- the crop, the plate, and the per-character
+    confidence behind the read. Both are built for every identified vehicle,
+    so the two folders line up one to one.
+
+    Previously these were built only from links, so a run that found no
+    cross-camera match produced nothing at all, even with 27 vehicles
+    identified and photographed.
+    """
+    by_id = {s["id"]: s for s in sightings}
+
+    # Which pair of sightings the linker actually joined, so a card can show
+    # the score. Keyed both ways round, since a card orders by time.
+    link_of: dict[tuple[int, int], dict] = {}
+    for link in links:
+        link_of[(link["a_id"], link["b_id"])] = link
+        link_of[(link["b_id"], link["a_id"])] = link
+
+    groups: dict[str, list[dict]] = {}
+    for s in sightings:
+        if not s.get("plate") or s.get("plate_status") in (None, "missing", "unreadable"):
+            continue
+        groups.setdefault(s["plate"], []).append(s)
+
+    def rank(item):
+        _, rows = item
+        return (-len({r["cam_id"] for r in rows}),
+                -max((r.get("plate_quality") or 0.0) for r in rows))
+
+    out, written = [], set()
+    for plate, rows in sorted(groups.items(), key=rank)[:config.MAX_ROUTE_CARDS]:
+        ordered = sorted(rows, key=lambda r: r["t_in"])
+        link = None
+        for a, b in zip(ordered, ordered[1:]):
+            link = link_of.get((a["id"], b["id"])) or link
+
+        safe = plate.replace("?", "x").replace("/", "_")
+        path = config.JOURNEY_DIR / f"{safe}.jpg"
+        try:
+            out.append(visualizer.draw_journey(plate, ordered, link, str(path)))
+            written.add(path.resolve())
+        except Exception as exc:
+            logger.warning("evidence card failed for %s: %s", plate, exc)
+
+    for stale in config.JOURNEY_DIR.glob("*.jpg"):
+        if stale.resolve() not in written:
+            try:
+                stale.unlink()
+            except OSError as exc:
+                logger.debug("could not remove stale card %s: %s", stale, exc)
+    return out
+
+
+def build_montages(frame_index: list[tuple[str, str, float]]) -> list[str]:
+    """All cameras at the same moment, a handful of moments across the run."""
+    if not frame_index or config.MONTAGE_COUNT < 1:
+        return []
+    times = sorted(t for _, _, t in frame_index)
+    lo, hi = times[0], times[-1]
+    if hi <= lo:
+        picks = [lo]
+    else:
+        n = config.MONTAGE_COUNT
+        picks = [lo + (hi - lo) * i / (n - 1) for i in range(n)] if n > 1 else [lo]
+
+    out = []
+    for i, t in enumerate(picks):
+        path = config.MONTAGE_DIR / f"moment_{i:02d}.jpg"
+        try:
+            out.append(visualizer.draw_montage(frame_index, t, str(path)))
+        except Exception as exc:
+            logger.warning("montage failed at t=%s: %s", t, exc)
+    return out
+
+
 def build_map_links(links: list[dict], sightings: list[dict]) -> list[dict]:
     """Database links join two *sightings*; the map draws lines between
     *cameras*. Resolve one to the other here, where the database lives, and
@@ -188,16 +330,28 @@ def save_track(ft: dict, groups: list[list[dict]]) -> list[int]:
 # The run
 # ---------------------------------------------------------------------------
 
-def run(sources: dict[str, str], fresh: bool = True) -> dict:
+def run(sources: dict[str, str], fresh: bool = True,
+        max_seconds: float | None = None) -> dict:
     """sources: {"C1": "path/to/c1.mp4", ...}
+
+    max_seconds stops every camera after that many seconds of VIDEO time, so
+    clips of different lengths cover the same window. Two clips filmed at once
+    but 31s and 66s long otherwise give C2 35 extra seconds that C1 could never
+    have witnessed, and every vehicle in that tail is unmatchable by
+    construction.
 
     fresh=True starts from an empty database. init_db keeps whatever is already
     there, so without this a second run doubles every sighting and links run 1's
     rows to run 2's. The contract asks for one reproducible command, so the
     default is to start clean.
     """
+    # Start clean, but keep the previous run until this one has replaced it.
+    # Deleting up front meant an interrupted run left nothing at all -- the
+    # old results were gone and the new ones never arrived.
+    previous = config.DB_PATH.with_suffix(".prev.db")
     if fresh and config.DB_PATH.exists():
-        config.DB_PATH.unlink()
+        previous.unlink(missing_ok=True)
+        config.DB_PATH.rename(previous)
     database.init_db(str(config.DB_PATH))
     for cam_id, (lat, lon, name) in config.CAMERAS.items():
         database.save_camera(cam_id, lat, lon, name)
@@ -210,6 +364,7 @@ def run(sources: dict[str, str], fresh: bool = True) -> dict:
     display: dict[tuple[str, int], tuple] = {}
     switches = 0
     frames_saved = 0
+    frame_index: list[tuple[str, str, float]] = []   # (path, cam_id, video time)
 
     for cam_id, source in sources.items():
         # Real recording start, so two clips share one clock. None only makes
@@ -232,6 +387,10 @@ def run(sources: dict[str, str], fresh: bool = True) -> dict:
         locked_tracks: set[tuple[str, int]] = set()
         try:
             for f in camera.frames():
+                if max_seconds is not None and (f["t"] - start_time) >= max_seconds:
+                    logger.info("[%s] reached the %.0fs limit, stopping", cam_id, max_seconds)
+                    break
+
                 tracks = detector.update(f["frame"], cam_id, f["t"])
 
                 for t in tracks:
@@ -268,7 +427,8 @@ def run(sources: dict[str, str], fresh: bool = True) -> dict:
 
                 annotated = visualizer.draw_frame(f["frame"], tracks)
                 if config.SAVE_FRAME_EVERY and f["frame_no"] % config.SAVE_FRAME_EVERY == 0:
-                    visualizer.save_frame(annotated, cam_id, f["frame_no"])
+                    path = visualizer.save_frame(annotated, cam_id, f["frame_no"])
+                    frame_index.append((path, cam_id, f["t"]))
                     frames_saved += 1
 
                 for ft in detector.finished_tracks():
@@ -285,8 +445,31 @@ def run(sources: dict[str, str], fresh: bool = True) -> dict:
     clones = linker.find_cloned_plates()
 
     sightings = database.get_all_sightings()
+    # This run produced rows, so the previous database is safe to drop.
+    if fresh and previous.exists():
+        previous.unlink(missing_ok=True)
+
     map_links = build_map_links(database.get_links(), sightings)
-    map_path = visualizer.draw_map(database.get_cameras(), map_links)
+
+    # Show every time as "t+12.3s" from the first sighting rather than as a
+    # raw unix number, which means nothing to anyone reading a slide.
+    if sightings:
+        visualizer.set_clock_base(min(s["t_in"] for s in sightings))
+
+    journeys = build_journeys(database.get_links(), sightings)
+    montages = build_montages(frame_index)
+
+    # The tracker map: the street layout, who passed each camera, and one
+    # route per identified vehicle. This is THE map. The geographic one
+    # (visualizer.draw_map, out/map.png) showed camera dots on a satellite
+    # view and nothing about vehicles; it is kept for the frozen contract but
+    # is off by default, because three maps in out/ is two too many.
+    tracker_map = roadmap.draw_tracker_map(sightings, database.get_links())
+    routes = build_routes(database.get_links(), sightings)
+
+    map_path = None
+    if getattr(config, "DRAW_GEO_MAP", False):
+        map_path = visualizer.draw_map(database.get_cameras(), map_links)
     by_status: dict[str, int] = defaultdict(int)
     for s in sightings:
         by_status[s.get("plate_status") or "?"] += 1
@@ -296,6 +479,10 @@ def run(sources: dict[str, str], fresh: bool = True) -> dict:
         "plates": dict(by_status),
         "id_switches": switches,
         "frames_saved": frames_saved,
+        "journeys": len(journeys),
+        "montages": len(montages),
+        "routes": len(routes),
+        "tracker_map": tracker_map,
         "links": len(links),
         "clones": len(clones),
         "map": map_path,
@@ -307,9 +494,14 @@ def run(sources: dict[str, str], fresh: bool = True) -> dict:
             print(f"  {status:<10}: {by_status[status]}")
     print(f"id switches : {switches}")
     print(f"frames saved: {frames_saved} -> {config.FRAME_DIR}")
+    print(f"montages    : {len(montages)} -> {config.MONTAGE_DIR}")
+    print(f"journeys    : {len(journeys)} -> {config.JOURNEY_DIR}")
+    print(f"routes      : {len(routes)} -> {config.ROUTE_DIR}")
+    print(f"tracker map : {tracker_map}")
+    if map_path:
+        print(f"geo map     : {map_path}")
     print(f"links       : {summary['links']}")
     print(f"clones      : {summary['clones']}")
-    print(f"map         : {map_path}")
     return summary
 
 
@@ -320,6 +512,9 @@ def main() -> None:
     p.add_argument("--verbose", action="store_true", help="show per-pair link decisions")
     p.add_argument("--append", action="store_true",
                    help="add to the existing database instead of starting clean")
+    p.add_argument("--seconds", type=float, default=None, metavar="N",
+                   help="stop each camera after N seconds of video, so clips of "
+                        "different lengths cover the same window")
     args = p.parse_args()
 
     logging.basicConfig(
@@ -330,7 +525,23 @@ def main() -> None:
     sources = dict(v.split("=", 1) for v in args.videos) if args.videos else {
         cam_id: str(config.VIDEO_DIR / f"{cam_id.lower()}.mp4") for cam_id in config.CAMERAS
     }
-    run(sources, fresh=not args.append)
+
+    # Drop cameras whose clip simply is not there. A missing file is a normal
+    # state while the team is still filming, not an error worth a red traceback.
+    # Live sources (rtsp://, a webcam index) are never checked.
+    present = {}
+    for cam_id, src in sources.items():
+        looks_like_a_file = not (src.startswith("rtsp://") or src.isdigit())
+        if looks_like_a_file and not Path(src).exists():
+            print(f"{cam_id}: no clip at {src}, skipping")
+            continue
+        present[cam_id] = src
+
+    if not present:
+        p.error("no video sources found. Put clips in anpr/data/videos/ "
+                "or pass --videos C1=path.mp4")
+
+    run(present, fresh=not args.append, max_seconds=args.seconds)
 
 
 if __name__ == "__main__":

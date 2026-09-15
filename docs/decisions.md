@@ -228,13 +228,23 @@ slide; it is no longer true. Painted truck plates and night glare still are.
 The cost is a heavier install: PaddleOCR has to be cloned and the weights fetched from
 Hugging Face by hand. Both steps are in the README, and both paths are gitignored.
 
-### Preprocessing must match PaddleOCR's
+### Preprocessing follows the model author's script, not ppocr's
 
-Plates are padded out to 320px wide before the model sees them. PaddleOCR normalises
-first and pads with `0.0`; our first version padded with black pixels and normalised
-after, putting `-1.0` there. These weights were trained through PaddleOCR's pipeline, and
-almost every plate is narrower than 320px, so almost every read was affected. If anyone
-touches `_preprocess`, diff it against `ppocr/data/imaug/rec_img_aug.py` first.
+Plates are padded out to 320px wide before the model sees them, and there are two
+different conventions for how:
+
+* `ppocr/data/imaug/rec_img_aug.py` normalises first, then pads with `0.0` (mid grey)
+* `test.py` shipped with the Awiros weights pads with black pixels first, then normalises,
+  which puts `-1.0` in the padding
+
+We follow **the author's `test.py`**. Their 98.4% was measured with it, and the weights are
+theirs. This was briefly changed to the ppocr convention on the reasoning that the model
+was trained through ppocr's pipeline; that was wrong, and reading the shipped script
+settled it. If anyone wants to revisit it, measure both on real crops rather than
+reasoning about which ought to be right.
+
+The one deliberate deviation from `test.py` is `max(1, ...)` on the resize width: a very
+tall, narrow plate box rounds to zero and `cv2.resize` raises, which used to end the run.
 
 ### A recovered character is a guess
 
@@ -265,7 +275,38 @@ third-party model packages installed.
 
 ---
 
-## 9. What is not in git
+## 9. torch and paddle fight over OpenMP on Windows
+
+**Owner affected:** anyone running the pipeline
+
+The detector runs on torch (via ultralytics) and the OCR runs on paddle. Both ship their
+own copy of `libiomp5md.dll`, and on Windows whichever loads first wins. If paddle loads
+first, torch dies:
+
+```
+OSError: [WinError 127] The specified procedure could not be found.
+Error loading "...	orch\lib\shm.dll" or one of its dependencies.
+```
+
+Reproduced exactly:
+
+| order | result |
+|---|---|
+| `import torch` then `import paddle` | both fine |
+| `import paddle` then `import torch` | **torch fails** |
+
+In a normal run the detector loads torch first anyway, so the pipeline works by luck.
+`plate_reader._load_awiros_model` now imports torch immediately before paddle so the order
+is guaranteed rather than accidental. If you ever see that `shm.dll` error, something
+loaded paddle first.
+
+Related: do not `pip install paddleocr`. The PyPI package does not ship the `ppocr` module
+we need, and it downgrades numpy and installs a second OpenCV, which is what broke this
+environment in the first place. Get `ppocr` from the PaddleOCR source, as the README says.
+
+---
+
+## 10. What is not in git
 
 **Test footage** (`anpr/data/videos/`) — too big, and it is our own recording. Share over
 Drive; note each clip's real start time in the sheet, because `Camera(start_time=...)` is

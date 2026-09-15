@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ANPR Tracker — SIH26127</title>
+
+<!-- Cyanotype: theme init (must run before first paint, no flash) -->
+<script>
+  (function () {
+    try {
+      var saved = localStorage.getItem('cyanotype-theme');
+      var theme = saved
+        ? saved
+        : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      if (theme === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    } catch (e) { /* private mode — fall back to light */ }
+  })();
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600&family=Hanken+Grotesk:wght@400;500&family=Spline+Sans+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="/static/theme.css">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<header class="nav">
+  <span class="wordmark">ANPR<span class="accent">Tracker</span></span>
+  <span class="text-dim" style="font-size:13px">SIH26127 &middot; multi-camera vehicle tracking</span>
+  <span class="nav-spacer"></span>
+  <div class="nav-stats" id="navStats"></div>
+  <button class="theme-toggle" data-theme-toggle aria-pressed="false" aria-label="Switch to dark mode">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path id="themeIcon"
+      d="M12 3a9 9 0 1 0 9 9c0-.46-.04-.92-.1-1.36A5.39 5.39 0 0 1 12 3Z"/></svg>
+  </button>
+</header>
+
+<div class="shell">
+
+  <!-- ============================ left: setup ============================ -->
+  <div>
+    <section class="panel">
+      <p class="eyebrow">Step 1</p>
+      <h2>Draw the streets</h2>
+      <p class="hint">Click to lay down points along a road. Finish it, then drop a
+        camera anywhere on the line.</p>
+
+      <div class="toolbar">
+        <button class="tool active" id="toolRoad">Draw road</button>
+        <button class="tool" id="toolCamera">Place camera</button>
+        <button class="tool" id="toolMove">Move</button>
+        <button class="tool" id="toolErase">Erase</button>
+      </div>
+
+      <div class="row" style="margin-bottom:12px">
+        <button class="btn-secondary" id="finishRoad">Finish road</button>
+        <button class="btn-secondary" id="clearAll">Clear</button>
+      </div>
+
+      <div class="row">
+        <button class="btn-primary" id="saveLayout">Save layout</button>
+        <button class="btn-secondary" id="resetLayout">Defaults</button>
+      </div>
+      <div class="status"><span class="dot" id="layoutDot"></span><span id="layoutMsg">loading…</span></div>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Step 2</p>
+      <h2>Add clips</h2>
+      <p class="hint">One clip per camera. Note when each was filmed — that shared
+        clock is what lets the system match a vehicle across cameras.</p>
+
+      <div class="field">
+        <label for="fileInput">Upload video</label>
+        <input class="input" type="file" id="fileInput" accept="video/*" multiple>
+      </div>
+
+      <ul class="clip-list" id="clipList"></ul>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Step 3</p>
+      <h2>Assign and run</h2>
+      <p class="hint" style="margin-bottom:10px">Set how many seconds after the
+        first clip each one started recording. This is what lets the system know
+        a vehicle had time to drive from one camera to the other &mdash; without
+        it, nothing can be tracked across cameras.</p>
+
+      <ul class="cam-list" id="camList"></ul>
+
+      <div class="field" style="margin-top:12px">
+        <label for="secondsInput">Stop after (seconds of video, blank = all)</label>
+        <input class="input" type="number" id="secondsInput" min="1" placeholder="31">
+      </div>
+
+      <div class="run-bar">
+        <button class="btn-primary" id="runBtn">Run tracking</button>
+      </div>
+      <div class="status"><span class="dot" id="runDot"></span><span id="runMsg">idle</span></div>
+      <div class="error-box hidden" id="runError"></div>
+    </section>
+  </div>
+
+  <!-- ============================ right: canvas + results =============== -->
+  <div>
+    <section class="panel">
+      <div class="result-head">
+        <h2>Street layout</h2>
+        <p class="hint" style="margin:0" id="canvasHint">Cameras sit on roads, so a
+          route between them follows the streets rather than cutting across.</p>
+      </div>
+      <div class="canvas-wrap">
+        <canvas id="editor" width="960" height="620"
+                aria-label="Street layout editor: draw roads and place cameras"></canvas>
+        <span class="canvas-note" id="canvasNote">click to add road points</span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="result-head">
+        <h2 id="resultTitle">Results</h2>
+        <div class="tabs">
+          <button class="chip active" data-tab="vehicles">Vehicles</button>
+          <button class="chip" data-tab="map">Tracker map</button>
+          <button class="chip" data-tab="cameras">Camera views</button>
+        </div>
+      </div>
+
+      <div class="stat-row" id="statRow"></div>
+
+      <div id="tabProcessing" class="hidden">
+        <div class="processing">
+          <span class="spinner" aria-hidden="true"></span>
+          <b>Tracking in progress</b>
+          <p class="text-dim" id="procMsg">starting…</p>
+          <p class="meta" id="procElapsed">0s elapsed</p>
+          <p class="text-dim" id="procHint" style="max-width:46ch;margin:14px auto 0">
+            Reading every frame, tracking each vehicle, then voting on its plate
+            across all the frames it appeared in. A 30-second clip takes a few
+            minutes on CPU.
+          </p>
+        </div>
+      </div>
+
+      <div id="tabVehicles">
+        <div class="filters" id="filters">
+          <button class="chip active" data-filter="all">All</button>
+          <button class="chip" data-filter="identified">Identified</button>
+          <button class="chip" data-filter="tracked">Tracked across cameras</button>
+          <span class="filter-note text-dim" id="filterNote"></span>
+        </div>
+        <div class="vehicle-grid" id="vehicleGrid"></div>
+        <div class="empty hidden" id="vehicleEmpty">
+          <b>Nothing tracked yet</b>
+          Draw your streets, add a clip for each camera, then press Run tracking.
+        </div>
+      </div>
+
+      <div id="tabMap" class="hidden">
+        <img class="full-img" id="trackerMap" alt="Tracker map: streets, cameras and every route found">
+      </div>
+
+      <div id="tabCameras" class="hidden">
+        <p class="hint">Every camera at the same moment. The clips are processed one
+          after another, but each frame carries the time it was filmed, so these
+          are genuinely simultaneous.</p>
+        <div class="gallery" id="montageGrid"></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="overlay hidden" id="overlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalPlate">
+    <div class="modal-head">
+      <div style="flex:1">
+        <p class="eyebrow" id="modalRoute"></p>
+        <h3 id="modalPlate"></h3>
+        <p class="text-dim" id="modalDesc" style="margin:4px 0 0;font-size:14px"></p>
+      </div>
+      <button class="btn-secondary" id="modalClose">Close</button>
+    </div>
+    <div id="modalConf" class="conf-row"></div>
+    <div class="modal-imgs" style="margin-top:16px">
+      <div>
+        <p class="eyebrow">Path taken</p>
+        <img class="full-img" id="modalRouteImg" alt="Route this vehicle took between cameras">
+      </div>
+      <div>
+        <p class="eyebrow">What the cameras saw</p>
+        <img class="full-img" id="modalJourneyImg" alt="Photographic evidence from each camera">
+      </div>
+    </div>
+    <ul class="hop-list" id="modalHops"></ul>
+  </div>
+</div>
+
+<script src="/static/theme.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

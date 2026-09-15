@@ -6,7 +6,7 @@ Plate localization: fast-alpr's detector (open-image-models).
 
 Character reading: Awiros-ANPR-OCR (PP-OCRv5 / SVTR_HGNet) via PaddleOCR,
 with CTC gap-recovery for characters the model's collapse step discards.
-    https://huggingface.co/surendran0m07/anpr-ocr
+    https://huggingface.co/Awiros/anpr-ocr
     https://github.com/PaddlePaddle/PaddleOCR
 
 Anything unknown is None. An unreadable slot is '?' with conf 0.0.
@@ -71,12 +71,29 @@ def _localize_plate(crop: np.ndarray):
 
     # Safety net in case config swaps in a multi-class detector later.
     plate_detections = [d for d in detections if d.label == _PLATE_LABEL] or detections
-    best = max(plate_detections, key=lambda d: d.confidence)
 
-    box = best.bounding_box.clamp(crop.shape[1], crop.shape[0])
-    if box.is_empty:
-        return None
-    return box.xyxy
+    crop_h, crop_w = crop.shape[:2]
+    min_aspect = getattr(config, "MIN_PLATE_ASPECT", 1.0)
+    max_area = getattr(config, "MAX_PLATE_AREA_FRACTION", 0.5)
+
+    # Take the most confident detection that is actually shaped like a plate.
+    # The detector is willing to call a tarpaulin a plate at 0.69, and those
+    # boxes come out taller than wide or covering the whole vehicle.
+    for det in sorted(plate_detections, key=lambda d: -d.confidence):
+        box = det.bounding_box.clamp(crop_w, crop_h)
+        if box.is_empty:
+            continue
+        x1, y1, x2, y2 = box.xyxy
+        w, h = x2 - x1, y2 - y1
+        if h <= 0 or w <= 0:
+            continue
+        if (w / h) < min_aspect:
+            continue                       # a plate is never taller than wide
+        if (w * h) > max_area * crop_w * crop_h:
+            continue                       # a plate never fills half the vehicle
+        return box.xyxy
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -172,27 +189,30 @@ def _ensure_probs(logits):
 def _preprocess(img_bgr, target_shape):
     """Plate crop -> the CHW float tensor the recogniser expects.
 
-    Order matters. PaddleOCR normalises first and then pads the remaining
-    width with 0.0, which after its own (x/255 - 0.5) / 0.5 corresponds to
-    mid grey. Padding with black pixels first and normalising afterwards puts
-    -1.0 there instead, which is not what these weights were trained on, and
-    almost every plate is narrower than the 320px target so almost every read
-    was affected. Keep this matching ppocr/data/imaug/rec_img_aug.py.
+    This matches test.py as shipped with the weights on
+    https://huggingface.co/Awiros/anpr-ocr : resize to height, pad the
+    remaining width with black pixels, THEN normalise. Note this is not what
+    ppocr's own resize_norm_img does (it normalises first and pads with 0.0,
+    i.e. mid grey). Follow the model author's script, not the generic one --
+    their reported accuracy was measured with this. If you change it, measure
+    the before and after on real crops before keeping the change.
     """
-    channels, target_h, target_w = target_shape
+    _, target_h, target_w = target_shape
     img_h, img_w = img_bgr.shape[:2]
 
-    # max(1, ...): a very tall, narrow box rounds to zero width and cv2.resize
-    # raises, which used to end the whole run.
+    # max(1, ...) is the one deviation from test.py: a very tall, narrow plate
+    # box rounds to zero width and cv2.resize raises, which ended the whole run.
     new_w = max(1, min(int(img_w * (target_h / img_h)), target_w))
     resized = cv2.resize(img_bgr, (new_w, target_h))
 
-    norm = resized.astype(np.float32).transpose((2, 0, 1)) / 255.0
-    norm = (norm - 0.5) / 0.5
+    if new_w < target_w:
+        padded = np.zeros((target_h, target_w, 3), dtype=np.uint8)
+        padded[:, :new_w, :] = resized
+        resized = padded
 
-    padded = np.zeros((channels, target_h, target_w), dtype=np.float32)
-    padded[:, :, :new_w] = norm
-    return padded
+    img = resized.astype(np.float32) / 255.0
+    img = (img - 0.5) / 0.5
+    return img.transpose((2, 0, 1))
 
 
 def _load_awiros_model(weights_path=None, dict_path=None, device=None, paddleocr_dir=None, force=False):
@@ -212,11 +232,22 @@ def _load_awiros_model(weights_path=None, dict_path=None, device=None, paddleocr
 
     _ensure_paddleocr(paddleocr_dir)
 
+    # Import torch BEFORE paddle. On Windows both ship their own
+    # libiomp5md.dll; whichever loads first wins, and if paddle wins then
+    # torch dies with "WinError 127 ... shm.dll", taking ultralytics and the
+    # whole detector with it. In a normal run the detector loads torch first
+    # anyway, but this makes the order not depend on luck.
+    try:
+        import torch  # noqa: F401
+    except Exception:
+        pass
+
     import paddle
     from ppocr.modeling.architectures import build_model as ppocr_build_model
     from ppocr.postprocess import build_post_process
     from safetensors.numpy import load_file
 
+    paddle.disable_static()          # build the weights as dygraph params
     if device == "gpu" and not paddle.is_compiled_with_cuda():
         print("CUDA not available, falling back to CPU.")
         device = "cpu"
@@ -324,6 +355,24 @@ def _ctc_decode_with_gaps(probs, character_list, blank_idx=0,
     return chars, confs, debug
 
 
+def _ensure_dygraph():
+    """Put THIS thread into dynamic-graph mode before touching the model.
+
+    Paddle tracks dygraph/static mode per thread. The weights are loaded once
+    and cached, so a second caller on a different thread -- which is exactly
+    what a second run from the dashboard is -- inherits static mode and every
+    conv2d fails with:
+
+        conv2d(): argument (position 2) must be Value, but got EagerParamBase
+
+    read_plate() catches that and returns None, so the symptom is not a crash:
+    it is a run where every single plate comes back unread. Cheap and
+    idempotent, so just call it before each inference.
+    """
+    if _paddle is not None and _paddle.in_dynamic_mode() is False:
+        _paddle.disable_static()
+
+
 def _read_awiros(plate_crop: np.ndarray, gap_prob_threshold=None, min_char_confidence=None,
                   recover=True, scan_gaps=None):
     """Runs the Awiros model on an already-localized plate crop.
@@ -345,6 +394,7 @@ def _read_awiros(plate_crop: np.ndarray, gap_prob_threshold=None, min_char_confi
     else:
         gap_width_multiplier = getattr(config, "OCR_GAP_WIDTH_MULTIPLIER", 1.8)
 
+    _ensure_dygraph()
     tensor = _paddle.to_tensor(
         np.expand_dims(_preprocess(plate_crop, _IMAGE_SHAPE), axis=0)
     )

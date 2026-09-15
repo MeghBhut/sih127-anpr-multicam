@@ -6,6 +6,7 @@ opencv-python>=4.9
 
 # person 2 — detection + tracking (YOLO + BoT-SORT)
 ultralytics>=8.3
+lap>=0.5.12          # BoT-SORT's assignment solver; ultralytics auto-installs it otherwise
 
 # person 3 — plate localisation (open-image-models, the detector fast-alpr uses)
 open-image-models[onnx]>=0.3
@@ -15,6 +16,7 @@ open-image-models[onnx]>=0.3
 # GPU instead:  pip install paddlepaddle-gpu
 paddlepaddle>=2.6
 safetensors>=0.4
+scikit-image>=0.22   # ppocr's postprocess package imports it at load time
 
 # person 5 — map and deck images
 matplotlib>=3.8

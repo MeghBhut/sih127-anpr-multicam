@@ -94,6 +94,8 @@ sightings   : 12
   missing   : 1
 id switches : 0
 frames saved: 43 -> anpr/out/frames
+montages    : 6 -> anpr/out/montage
+journeys    : 4 -> anpr/out/journeys
 links       : 4
 clones      : 0
 map         : anpr/out/map.png
@@ -105,9 +107,24 @@ map         : anpr/out/map.png
 | `anpr/out/frames/` | Annotated screenshots. Green box = plate locked, orange = still reading, grey = no plate, with per-character confidence underneath. |
 | `anpr/out/crops/` | The best photo of each vehicle — the evidence image for its row. |
 | `anpr/out/crops/fail/` | Crops the OCR could not read, labelled by reason. Feeds the risk slide and any future fine-tuning. |
-| `anpr/out/map.png` | Camera dots with a line per route. Solid = plate match, dashed = inferred. |
+| `anpr/out/map.png` | Camera pins on a **real street map**, one line per route labelled with how many vehicles took it. Solid = plate match, dashed = inferred. Tiles are fetched once from OpenStreetMap and cached, so it renders offline afterwards. |
+| `anpr/out/montage/` | **All cameras at the same moment**, side by side, at a few points across the run. The clearest single image of what multi-camera means. |
+| `anpr/out/journeys/` | **One card per linked vehicle**: its photo at the first camera, its photo at the second, the plate, the travel time, and how the two were matched. This is the evidence behind every link. |
 
 Every run starts from a clean database, so the same command twice gives the same answer.
+
+## Filming for the demo
+
+Two things decide whether any of this works, and neither is a code setting:
+
+1. **The same vehicles must pass both cameras.** The linker compares sightings; if no
+   vehicle appears in two clips there is nothing to link, and the run will correctly
+   report zero links.
+2. **Get close enough that a plate is at least 100px wide in frame.** On the first test
+   clips the near camera read plates at 0.92 quality and the far one at 0.14 — same code,
+   same model, entirely down to distance.
+
+Note each clip's real start time as you film; that goes in `RECORDING_START`.
 
 ## If something goes wrong
 
@@ -118,6 +135,7 @@ Every run starts from a clean database, so the same command twice gives the same
 | `could not open source: ...` | Wrong video path. That camera is skipped; the others still run. |
 | `no RECORDING_START in config` | Step 2. The run works, but the links will be meaningless. |
 | `detector needs ultralytics` | `pip install ultralytics`. If `yolo26s.pt` will not download, `pip install -U ultralytics`. |
+| `WinError 127 ... shm.dll` | paddle got loaded before torch. Import torch first; never `pip install paddleocr` (it also downgrades numpy). |
 | Everything reads as `no plate` | Check the OCR weights are in `anpr/`, and look in `out/crops/fail/` to see what it is rejecting. |
 
 ## Tests

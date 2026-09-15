@@ -1,0 +1,200 @@
+/* Cyanotype theme tokens — the same package used in GlobeTrotter.
+   Load before every component stylesheet. No component file may contain a
+   raw hex value; reference a var(--token) or something derived from one. */
+
+:root {
+  /* surfaces */
+  --bg: #D7E0E2;
+  --surface: #E6EDEE;
+  --surface-2: #F3F7F8;
+  --line: #B2C3C6;
+
+  /* text */
+  --ink: #16262B;
+  --ink-dim: #55696D;
+
+  /* cyan — primary / actions / navigation */
+  --cyan: #0A8FA5;
+  --cyan-glow: #0FA6BE;
+  --cyan-tint: #DFEEF1;
+
+  /* gold — secondary / values / ratings ONLY */
+  --sun: #B47A18;
+  --sun-soft: #E9C35E;
+
+  /* scene bands */
+  --sea: #0A8FA5;
+  --sky: #7FC7D4;
+
+  --radius-card: 10px;
+  --radius-control: 7px;
+  --radius-pill: 20px;
+  --shadow-card: 0 1px 2px rgba(22, 38, 43, 0.06), 0 4px 12px rgba(22, 38, 43, 0.05);
+  --focus-ring: 0 0 0 3px var(--cyan-tint);
+}
+
+[data-theme="dark"] {
+  --bg: #101E20;
+  --surface: #17282A;
+  --surface-2: #1E3033;
+  --line: #2C4145;
+
+  --ink: #D3E0E1;
+  --ink-dim: #7F9498;
+
+  --cyan: #35C6DC;
+  --cyan-glow: #4FD8EC;
+  --cyan-tint: #123034;
+
+  --sun: #E4B85E;
+  --sun-soft: #E4B85E;
+
+  --sea: #123E45;
+  --sky: #2C6470;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.25), 0 8px 20px rgba(0, 0, 0, 0.30);
+}
+
+html, body {
+  background: var(--bg);
+  color-scheme: light dark;
+}
+
+* {
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none; }
+}
+
+/* ---------------------------------------------------------- font roles */
+body {
+  font-family: 'Hanken Grotesk', system-ui, sans-serif;
+  font-weight: 400;
+  color: var(--ink);
+  background: var(--bg);
+}
+
+h1, h2, h3,
+.hero-title,
+.card-title,
+.wordmark {
+  font-family: 'Bricolage Grotesque', 'Hanken Grotesk', system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.card-title { font-weight: 500; }
+
+button, input, select, textarea, .nav-link, .ui-text {
+  font-family: 'Hanken Grotesk', system-ui, sans-serif;
+  font-weight: 500;
+}
+
+.meta, .price, .rating, .date, .eyebrow, .stat-mono {
+  font-family: 'Spline Sans Mono', ui-monospace, monospace;
+  font-weight: 400;
+}
+
+.eyebrow {
+  font-family: 'Spline Sans Mono', ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--cyan);
+}
+
+/* ---------------------------------------------------------- components */
+.surface, .card, .panel, .nav, .modal {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+}
+
+.input, .search-field, .inset {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  color: var(--ink);
+}
+.input::placeholder { color: var(--ink-dim); }
+.input:focus, .search-field:focus, select:focus-visible {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: var(--focus-ring);
+}
+
+.text-primary, body, p, li { color: var(--ink); }
+.text-dim, .caption, .subtext { color: var(--ink-dim); }
+
+.wordmark { color: var(--ink); }
+.wordmark .accent { color: var(--cyan); }
+
+a, .link { color: var(--cyan); text-decoration: none; }
+a:hover, .link:hover { color: var(--cyan-glow); }
+.nav-link.active { color: var(--cyan); font-weight: 500; }
+
+.btn-primary {
+  background: var(--cyan);
+  color: var(--surface-2);
+  border: none;
+  border-radius: var(--radius-control);
+  font-weight: 500;
+  padding: 10px 20px;
+  cursor: pointer;
+}
+.btn-primary:hover { background: var(--cyan-glow); }
+.btn-primary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+
+.btn-secondary {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  font-weight: 500;
+  padding: 10px 20px;
+  cursor: pointer;
+}
+.btn-secondary:hover { border-color: var(--cyan); color: var(--cyan); }
+.btn-secondary:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.btn-secondary:disabled { opacity: .5; cursor: not-allowed; }
+
+.price, .rating, .stars {
+  color: var(--sun);
+  font-family: 'Spline Sans Mono', ui-monospace, monospace;
+  font-weight: 500;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  background: var(--cyan-tint);
+  color: var(--cyan);
+  border-radius: var(--radius-pill);
+  padding: 6px 14px;
+  font-weight: 500;
+  font-size: 13px;
+  border: none;
+  cursor: pointer;
+}
+.chip.active, .chip:hover { background: var(--cyan); color: var(--surface-2); }
+.chip:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink);
+  cursor: pointer;
+}
+.theme-toggle:hover { border-color: var(--cyan); color: var(--cyan); }
+.theme-toggle:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.theme-toggle svg { width: 18px; height: 18px; fill: currentColor; }
